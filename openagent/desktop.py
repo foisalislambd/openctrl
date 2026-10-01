@@ -5,6 +5,7 @@ from __future__ import annotations
 import ctypes
 import os
 import queue
+import shutil
 import subprocess
 import threading
 import time
@@ -314,6 +315,8 @@ class Desktop:
         target = target.strip().strip('"')
         if not target:
             return "launch needs a program, file, folder, or URL."
+        if _is_cursor(target):
+            return _open_cursor(args)
         try:
             if args.strip():
                 subprocess.Popen(["cmd", "/c", "start", "", target, args], shell=False)
@@ -523,6 +526,90 @@ def _decode(data: bytes) -> str:
         except UnicodeDecodeError:
             continue
     return data.decode("utf-8", errors="replace").strip()
+
+
+def _is_cursor(target: str) -> bool:
+    name = os.path.basename(target).lower()
+    return name in {"cursor", "cursor.exe", "cursor.cmd"}
+
+
+def _cursor_exe() -> str | None:
+    local = os.environ.get("LOCALAPPDATA", "")
+    candidates = []
+    if local:
+        candidates.append(os.path.join(local, "Programs", "cursor", "Cursor.exe"))
+    found = shutil.which("cursor")
+    if found:
+        base = found
+        for _ in range(5):
+            base = os.path.dirname(base)
+            exe = os.path.join(base, "Cursor.exe")
+            if os.path.isfile(exe):
+                candidates.insert(0, exe)
+                break
+    for path in candidates:
+        if os.path.isfile(path):
+            return path
+    return None
+
+
+def _desktop_roots() -> list[str]:
+    home = os.path.expanduser("~")
+    return [
+        os.path.join(home, "Desktop"),
+        os.path.join(home, "OneDrive", "Desktop"),
+        os.path.join(home, "Documents"),
+        home,
+    ]
+
+
+def _resolve_folder(raw: str) -> str | None:
+    text = os.path.expandvars(os.path.expanduser(raw.strip().strip('"').strip("'")))
+    if not text or text == ".":
+        return os.getcwd()
+    if os.path.isabs(text) and os.path.isdir(text):
+        return os.path.abspath(text)
+    if not os.path.isabs(text):
+        for root in _desktop_roots():
+            candidate = os.path.join(root, text)
+            if os.path.isdir(candidate):
+                return os.path.abspath(candidate)
+        cwd_candidate = os.path.abspath(text)
+        if os.path.isdir(cwd_candidate):
+            return cwd_candidate
+    name = os.path.basename(text).lower()
+    matches = []
+    for root in _desktop_roots():
+        if not os.path.isdir(root):
+            continue
+        try:
+            entries = os.listdir(root)
+        except OSError:
+            continue
+        for entry in entries:
+            if entry.lower() == name and os.path.isdir(os.path.join(root, entry)):
+                matches.append(os.path.abspath(os.path.join(root, entry)))
+    if len(matches) == 1:
+        return matches[0]
+    return None
+
+
+def _open_cursor(folder_arg: str) -> str:
+    exe = _cursor_exe()
+    if not exe:
+        return "Cursor.exe was not found under Local AppData or on PATH."
+    folder_arg = folder_arg.strip()
+    if not folder_arg:
+        subprocess.Popen([exe])
+        return "Opened Cursor."
+    folder = _resolve_folder(folder_arg)
+    if not folder:
+        return (
+            f"Could not find folder {folder_arg!r}. "
+            "Pass a full path, or the folder name as it appears on the Desktop."
+        )
+    subprocess.Popen([exe, folder])
+    return f"Opened Cursor in {folder}."
 
 
 def image_to_screen(x: int, y: int, capture: dict) -> tuple[int, int]:

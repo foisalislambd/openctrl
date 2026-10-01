@@ -24,7 +24,7 @@ Work in small steps.
 - Take a screenshot only when the tree has no usable control, the UI is custom-drawn, or you must see pixels. Do not screenshot every step.
 - After a screenshot, the next message contains the image. Do not click, drag, or scroll in the same step as the screenshot. On the following step use coordinate_space "image". (0, 0) is the top-left of that image.
 - ui_tree lines include screen coordinates like @x,y widthxheight. Those are screen pixels. Use coordinate_space "screen" only for those numbers.
-- launch opens programs, files, folders, and URLs. run_powershell is for files, settings, and text output. Do not use PowerShell to click a GUI.
+- launch opens programs, files, folders, and URLs. To open a folder in Cursor, call launch with target "cursor" and args set to the folder name or full path. A bare name is searched on the Desktop. Do not click through the Cursor GUI to open a folder. run_powershell is for files, settings, and text output. Do not use PowerShell to click a GUI.
 - type_text pastes Unicode, including Bengali, into the focused control. Click the edit box first when it is not already focused.
 - press_keys is only for chords and single keys: ctrl+s, alt+tab, win+e, enter, ctrl+shift+p. Never put a sentence in press_keys.
 - After an action, check the result with foreground or ui_tree before saying it worked. If a tool returns an error, change approach. Do not repeat the same failed call.
@@ -517,10 +517,10 @@ TOOLS = [
     ),
     _tool(
         "launch",
-        "Open a program, file, folder, or URL in the normal Windows way. Example target: notepad, explorer, cursor, or a full path.",
+        "Open a program, file, folder, or URL. To open a folder in Cursor, target is cursor and args is the folder name or full path. A bare folder name is searched on the Desktop.",
         {
-            "target": _prop("string", "Program name, path, folder, or URL."),
-            "args": _prop("string", "Optional arguments, such as a folder path for an editor."),
+            "target": _prop("string", "Program name, path, folder, or URL. Use cursor to open Cursor."),
+            "args": _prop("string", "For Cursor, the folder to open. Otherwise optional arguments."),
         },
         ["target"],
     ),
