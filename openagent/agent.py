@@ -9,11 +9,15 @@ import logging
 import threading
 from dataclasses import dataclass, field
 
+from openagent.awake import pop_awake, push_awake
 from openagent.config import Settings
 from openagent.desktop import Desktop, Shot, run_powershell
+from openagent.files import resolve_send_path
 from openagent.format_tg import humanize, one_line
 from openagent.llm import LLMError, OpenRouter
+from openagent.memory import Memory
 from openagent.safety import danger_reason
+from openagent.schedule import Schedule
 
 log = logging.getLogger("openagent.agent")
 
@@ -24,7 +28,15 @@ Work in small steps.
 - Take a screenshot only when the tree has no usable control, the UI is custom-drawn, or you must see pixels. Do not screenshot every step.
 - After a screenshot, the next message contains the image. Do not click, drag, or scroll in the same step as the screenshot. On the following step use coordinate_space "image". (0, 0) is the top-left of that image.
 - ui_tree lines include screen coordinates like @x,y widthxheight. Those are screen pixels. Use coordinate_space "screen" only for those numbers.
-- launch opens programs, files, folders, and URLs. To open a folder in Cursor, call launch with target "cursor" and args set to the folder name or full path. A bare name is searched on the Desktop. Do not click through the Cursor GUI to open a folder. run_powershell is for files, settings, and text output. Do not use PowerShell to click a GUI.
+- launch opens programs, files, folders, and URLs. To open a folder in Cursor without a prompt, call launch with target "cursor" and args set to the folder name or full path. A bare name is searched on the Desktop.
+- When the user wants Cursor's AI to do the work, call cursor_prompt with the folder and the instruction. It opens the folder, focuses Cursor, presses Ctrl+I, pastes the text, and presses Enter. Do not click through the Cursor UI for that.
+- send_file sends one file from this PC into the Telegram chat. Never send .env, keys, or password files.
+- clipboard_set copies text to the Windows clipboard. clipboard_get reads it.
+- window minimizes, maximizes, restores, or moves a window to a monitor.
+- Notes from earlier tasks are included with the user message. Use memory to save a folder, preference, or fact you will need again.
+- schedule runs an instruction later, from 15 seconds up to 24 hours, while OpenAgent is running.
+- If a tool says the desktop is locked, stop. Do not keep calling tools.
+- run_powershell is for files, settings, and text output. Do not use PowerShell to click a GUI.
 - type_text pastes Unicode, including Bengali, into the focused control. Click the edit box first when it is not already focused.
 - press_keys is only for chords and single keys: ctrl+s, alt+tab, win+e, enter, ctrl+shift+p. Never put a sentence in press_keys.
 - After an action, check the result with foreground or ui_tree before saying it worked. If a tool returns an error, change approach. Do not repeat the same failed call.
@@ -50,6 +62,7 @@ class RunStats:
     completion_tokens: int = 0
     cost: float = 0.0
     cost_known: bool = False
+    budget_blocks: int = 1
 
 
 @dataclass
@@ -62,6 +75,7 @@ class AgentEvents:
     final: callable = field(repr=False)
     stopped: callable = field(repr=False)
     fail: callable = field(repr=False)
+    send_file: callable = field(repr=False)
 
 
 def fresh_history() -> list[dict]:
@@ -75,16 +89,35 @@ async def run_agent(
     messages: list[dict],
     task: str,
     events: AgentEvents,
+    memory: Memory | None = None,
+    schedule: Schedule | None = None,
+    user_id: int = 0,
+    chat_id: int = 0,
+    image: bytes | None = None,
+    seed_cost: float = 0.0,
 ) -> None:
     _repair_tool_calls(messages)
-    messages.append({"role": "user", "content": task})
+    messages.append(_user_turn(task, memory.snapshot() if memory else "", image))
+    if memory:
+        memory.write("last_task", one_line(task, 300))
     stats = RunStats()
+    if seed_cost > 0:
+        stats.cost = seed_cost
+        stats.cost_known = True
+    push_awake()
     try:
         for step in range(1, settings.max_steps + 1):
             if events.cancel.is_set():
                 await events.stopped(_footer(stats, stats.steps))
                 return
-            _pull_inbox(messages, events.inbox)
+            locked = await asyncio.to_thread(desktop.screen_locked)
+            if locked:
+                await events.final(locked, _footer(stats, stats.steps))
+                return
+            extra_cost = _pull_inbox(messages, events.inbox)
+            if extra_cost:
+                stats.cost += extra_cost
+                stats.cost_known = True
             _prepare(messages)
             try:
                 message, usage = await _complete(llm, messages, events.cancel)
@@ -100,14 +133,21 @@ async def run_agent(
             tool_calls = message.get("tool_calls") or []
             narration = one_line(_text(message.get("content")))
             messages.append(_assistant_record(message))
+            if tool_calls and await _stop_for_budget(settings, stats, events):
+                for call in tool_calls:
+                    messages.append(_tool_message(call, "Stopped because the cost limit was reached."))
+                return
             if not tool_calls:
-                await events.final(_text(message.get("content")) or "Done.", _footer(stats, step))
+                summary = _text(message.get("content")) or "Done."
+                if memory:
+                    memory.write("last_summary", one_line(summary, 500))
+                await events.final(summary, _footer(stats, step))
                 return
             stats.steps = step
             images: list[ToolResult] = []
-            for call in tool_calls:
+            for index, call in enumerate(tool_calls):
                 if events.cancel.is_set():
-                    messages.append(_tool_message(call, "Cancelled by the user."))
+                    _close_calls(messages, tool_calls[index:], "Cancelled by the user.")
                     await events.stopped(_footer(stats, stats.steps))
                     return
                 name, args = _parse_call(call)
@@ -121,11 +161,28 @@ async def run_agent(
                 )
                 narration = ""
                 try:
-                    result = await _dispatch(desktop, events, name, args)
+                    result = await _dispatch(
+                        desktop,
+                        events,
+                        name,
+                        args,
+                        memory=memory,
+                        schedule=schedule,
+                        user_id=user_id,
+                        chat_id=chat_id,
+                        inbox=settings.root / "inbox",
+                    )
                 except Exception as exc:
                     log.exception("Tool %s failed", name)
                     result = ToolResult(text=f"Tool error: {exc}")
                 messages.append(_tool_message(call, _cap(result.text, 9000)))
+                if _desktop_locked(result.text):
+                    _close_calls(messages, tool_calls[index + 1 :], "Stopped because the desktop is locked.")
+                    await events.final(
+                        "The Windows desktop is locked. Unlock the PC and tell me to continue.",
+                        _footer(stats, stats.steps),
+                    )
+                    return
                 if result.image:
                     images.append(result)
                     await events.photo(result.image, result.width, result.height)
@@ -146,6 +203,8 @@ async def run_agent(
     except Exception as exc:
         log.exception("Agent crashed")
         await events.fail(str(exc))
+    finally:
+        pop_awake()
 
 
 def _repair_tool_calls(messages: list[dict]) -> None:
@@ -177,20 +236,55 @@ def _repair_tool_calls(messages: list[dict]) -> None:
         index = cursor
 
 
-def _pull_inbox(messages: list[dict], inbox: asyncio.Queue) -> None:
-    notes: list[str] = []
+def unpack_note(item) -> tuple[str, bytes | None, float]:
+    if isinstance(item, str):
+        return item, None, 0.0
+    if isinstance(item, tuple) and len(item) == 3:
+        text, image, cost = item
+        picture = image if isinstance(image, (bytes, bytearray)) else None
+        try:
+            amount = float(cost or 0)
+        except (TypeError, ValueError):
+            amount = 0.0
+        return str(text), picture, amount
+    return str(item), None, 0.0
+
+
+def combine_notes(items: list) -> tuple[str, bytes | None, float]:
+    texts: list[str] = []
+    image: bytes | None = None
+    cost = 0.0
+    for item in items:
+        text, picture, extra = unpack_note(item)
+        if text.strip():
+            texts.append(text.strip())
+        if picture:
+            image = bytes(picture)
+        cost += extra
+    return "\n".join(texts), image, cost
+
+
+def _pull_inbox(messages: list[dict], inbox: asyncio.Queue) -> float:
+    items = []
     while True:
         try:
-            notes.append(inbox.get_nowait())
+            items.append(inbox.get_nowait())
         except asyncio.QueueEmpty:
             break
-    if notes:
-        messages.append(
-            {
-                "role": "user",
-                "content": "New instruction while you are working:\n" + "\n".join(notes),
-            }
-        )
+    text, image, cost = combine_notes(items)
+    if text or image:
+        body = "New instruction while you are working:\n" + text
+        messages.append(_user_turn(body, "", image))
+    return cost
+
+
+def _close_calls(messages: list[dict], calls: list, note: str) -> None:
+    for call in calls:
+        messages.append(_tool_message(call, note))
+
+
+def _desktop_locked(text: str) -> bool:
+    return "desktop is locked" in text.lower()
 
 
 def _prepare(messages: list[dict]) -> None:
@@ -333,6 +427,55 @@ def _usage_cost(usage: dict) -> float | None:
         return None
 
 
+def _user_turn(task: str, notes: str, image: bytes | None) -> dict:
+    text = task
+    if notes:
+        text += "\n\nNotes you saved earlier:\n" + notes
+    if not image:
+        return {"role": "user", "content": text}
+    encoded = base64.b64encode(image).decode("ascii")
+    return {
+        "role": "user",
+        "content": [
+            {"type": "text", "text": text},
+            {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{encoded}"}},
+        ],
+    }
+
+
+def _remember_cursor(memory: Memory | None, text: str) -> None:
+    marker = "Opened Cursor in "
+    if memory is None or marker not in text:
+        return
+    folder = text.split(marker, 1)[1]
+    folder = folder.split(". ", 1)[0].rstrip(".").strip()
+    if folder:
+        memory.write("last_cursor_folder", folder)
+
+
+def _budget_hit(stats: RunStats, limit: float) -> bool:
+    if limit <= 0 or not stats.cost_known:
+        return False
+    return stats.cost >= limit * max(1, stats.budget_blocks)
+
+
+async def _stop_for_budget(settings: Settings, stats: RunStats, events: AgentEvents) -> bool:
+    if not _budget_hit(stats, settings.max_task_cost):
+        return False
+    allowed = await events.confirm(
+        f"${stats.cost:.6f}",
+        f"This task reached the ${settings.max_task_cost:.2f} cost limit. Allow another ${settings.max_task_cost:.2f}?",
+    )
+    if allowed:
+        stats.budget_blocks += 1
+        return False
+    await events.final(
+        "Stopped because the cost limit was reached. Send another message to continue.",
+        _footer(stats, stats.steps),
+    )
+    return True
+
+
 def _footer(stats: RunStats, steps: int) -> str:
     tokens = f"{steps} steps · {_compact(stats.prompt_tokens)} in · {_compact(stats.completion_tokens)} out"
     if stats.cost_known:
@@ -355,6 +498,16 @@ def _detail(name: str, args: dict) -> str:
         return str(args.get("keys") or "")
     if name == "launch":
         return " ".join(part for part in (str(args.get("target") or ""), str(args.get("args") or "")) if part)
+    if name == "cursor_prompt":
+        return one_line(str(args.get("text") or ""), 180)
+    if name == "send_file":
+        return str(args.get("path") or "")
+    if name == "window":
+        return " ".join(part for part in (str(args.get("action") or ""), str(args.get("title") or "")) if part)
+    if name == "schedule":
+        return one_line(str(args.get("instruction") or args.get("job_id") or ""), 180)
+    if name == "memory":
+        return str(args.get("key") or "")
     if name == "click":
         return f"{args.get('button', 'left')} ({args.get('x')}, {args.get('y')}) {args.get('coordinate_space', 'image')}"
     if name == "click_control":
@@ -395,7 +548,17 @@ def _int(args: dict, key: str, default: int) -> int:
         return default
 
 
-async def _dispatch(desktop: Desktop, events: AgentEvents, name: str, args: dict) -> ToolResult:
+async def _dispatch(
+    desktop: Desktop,
+    events: AgentEvents,
+    name: str,
+    args: dict,
+    memory: Memory | None = None,
+    schedule: Schedule | None = None,
+    user_id: int = 0,
+    chat_id: int = 0,
+    inbox=None,
+) -> ToolResult:
     if args.get("_error"):
         return ToolResult(str(args["_error"]))
     if name == "wait":
@@ -428,6 +591,49 @@ async def _dispatch(desktop: Desktop, events: AgentEvents, name: str, args: dict
             _opt(args, "cwd"),
         )
         return ToolResult(text)
+    if name == "send_file":
+        found, error = resolve_send_path(str(args.get("path") or ""), inbox)
+        if error or not found:
+            return ToolResult(error or "File not found.")
+        return ToolResult(await events.send_file(found))
+    if name == "cursor_prompt":
+        text = await asyncio.to_thread(
+            desktop.cursor_prompt,
+            str(args.get("folder") or ""),
+            str(args.get("text") or ""),
+            _as_bool(args.get("send", True)),
+        )
+        _remember_cursor(memory, text)
+        return ToolResult(text)
+    if name == "clipboard_set":
+        text = await asyncio.to_thread(desktop.clipboard_set, str(args.get("text") or ""))
+        return ToolResult(text)
+    if name == "window":
+        text = await asyncio.to_thread(
+            desktop.window_action,
+            str(args.get("title") or ""),
+            str(args.get("action") or ""),
+            _int(args, "monitor", 1),
+        )
+        return ToolResult(text)
+    if name == "memory":
+        if memory is None:
+            return ToolResult("Memory is not available.")
+        action = str(args.get("action") or "read").strip().lower()
+        if action == "write":
+            return ToolResult(memory.write(str(args.get("key") or ""), str(args.get("value") or "")))
+        return ToolResult(memory.read(str(args.get("key") or "")))
+    if name == "schedule":
+        if schedule is None:
+            return ToolResult("Scheduling is not available.")
+        action = str(args.get("action") or "list").strip().lower()
+        if action == "add":
+            return ToolResult(
+                schedule.add(user_id, chat_id, str(args.get("instruction") or ""), _int(args, "delay_seconds", 60))
+            )
+        if action == "cancel":
+            return ToolResult(schedule.cancel(str(args.get("job_id") or "")))
+        return ToolResult(schedule.listing())
     if name == "screenshot":
         shot: Shot = await asyncio.to_thread(desktop.screenshot, _opt(args, "window"))
         return ToolResult(shot.text, image=shot.jpeg, width=shot.width, height=shot.height)
@@ -603,6 +809,59 @@ TOOLS = [
         ["x1", "y1", "x2", "y2"],
     ),
     _tool("clipboard_get", "Read text currently on the Windows clipboard.", {}, []),
+    _tool(
+        "clipboard_set",
+        "Copy text onto the Windows clipboard.",
+        {"text": _prop("string", "Text to copy.")},
+        ["text"],
+    ),
+    _tool(
+        "cursor_prompt",
+        "Open a folder in Cursor, focus it, open the agent panel, paste text, and press Enter. Use this when Cursor's AI should do the work.",
+        {
+            "folder": _prop("string", "Folder name or full path. A bare name is searched on the Desktop."),
+            "text": _prop("string", "Instruction to paste into Cursor's agent panel."),
+            "send": _prop("boolean", "Press Enter after pasting. Default true."),
+        },
+        ["text"],
+    ),
+    _tool(
+        "send_file",
+        "Send a file from this PC to the Telegram chat. Do not use this for .env or key files.",
+        {"path": _prop("string", "Full path or a file name on the Desktop, in Documents, Downloads, or the inbox.")},
+        ["path"],
+    ),
+    _tool(
+        "window",
+        "Minimize, maximize, restore, or move a window onto a monitor.",
+        {
+            "title": _prop("string", "Substring of the window title."),
+            "action": _prop("string", "minimize, maximize, restore, or move.", ["minimize", "maximize", "restore", "move"]),
+            "monitor": _prop("integer", "For move, monitor number starting at 1. Default 1."),
+        },
+        ["title", "action"],
+    ),
+    _tool(
+        "memory",
+        "Read or write a short note that survives the next task. Empty value forgets the note.",
+        {
+            "action": _prop("string", "read or write.", ["read", "write"]),
+            "key": _prop("string", "Note name, such as last_cursor_folder. Omit on read to list all."),
+            "value": _prop("string", "Text to store when action is write."),
+        },
+        ["action"],
+    ),
+    _tool(
+        "schedule",
+        "Run an instruction later while OpenAgent is open. Delay is 15 seconds to 24 hours.",
+        {
+            "action": _prop("string", "add, list, or cancel.", ["add", "list", "cancel"]),
+            "instruction": _prop("string", "What to do when the timer fires."),
+            "delay_seconds": _prop("integer", "How long to wait. Default 60."),
+            "job_id": _prop("string", "Id to cancel."),
+        },
+        ["action"],
+    ),
     _tool(
         "wait",
         "Pause briefly so a window can open. Prefer under 3 seconds.",

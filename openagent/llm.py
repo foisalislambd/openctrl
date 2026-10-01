@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import base64
 import logging
 
 import httpx
@@ -11,6 +12,7 @@ from openagent.config import Settings
 log = logging.getLogger("openagent.llm")
 
 API_URL = "https://openrouter.ai/api/v1/chat/completions"
+STT_URL = "https://openrouter.ai/api/v1/audio/transcriptions"
 
 
 class LLMError(RuntimeError):
@@ -37,21 +39,21 @@ class OpenRouter:
         }
         if self.settings.provider_sort:
             payload["provider"] = {"sort": self.settings.provider_sort}
-        response = await self._post(payload)
+        response = await self._post(API_URL, payload)
         if response.status_code == 400 and _should_retry_without_provider(response.text, payload):
             log.warning("Retrying without provider sort: %s", response.text[:300])
             payload.pop("provider", None)
-            response = await self._post(payload)
+            response = await self._post(API_URL, payload)
         if response.status_code == 400 and "max_completion_tokens" in response.text and "max_tokens" in payload:
             limit = payload.pop("max_tokens")
             payload["max_completion_tokens"] = limit
-            response = await self._post(payload)
+            response = await self._post(API_URL, payload)
         if response.status_code == 400 and "parallel_tool_calls" in response.text and "parallel_tool_calls" in payload:
             payload.pop("parallel_tool_calls", None)
-            response = await self._post(payload)
+            response = await self._post(API_URL, payload)
         if response.status_code == 400 and "usage" in response.text.lower() and "usage" in payload:
             payload.pop("usage", None)
-            response = await self._post(payload)
+            response = await self._post(API_URL, payload)
         if response.status_code >= 400:
             raise LLMError(f"OpenRouter {response.status_code}: {response.text[:800]}")
         try:
@@ -67,7 +69,32 @@ class OpenRouter:
         usage = body.get("usage") or {}
         return message, usage
 
-    async def _post(self, payload: dict) -> httpx.Response:
+    async def transcribe(self, data: bytes, audio_format: str) -> tuple[str, float]:
+        payload = {
+            "model": self.settings.transcribe_model,
+            "input_audio": {
+                "data": base64.b64encode(data).decode("ascii"),
+                "format": audio_format,
+            },
+        }
+        response = await self._post(STT_URL, payload)
+        if response.status_code >= 400:
+            raise LLMError(f"OpenRouter transcription {response.status_code}: {response.text[:800]}")
+        try:
+            body = response.json()
+        except ValueError as exc:
+            raise LLMError("OpenRouter transcription was not JSON.") from exc
+        text = str(body.get("text") or "").strip()
+        if not text:
+            raise LLMError("The voice note had no words.")
+        usage = body.get("usage") or {}
+        try:
+            cost = float(usage.get("cost") or 0)
+        except (TypeError, ValueError):
+            cost = 0.0
+        return text, cost
+
+    async def _post(self, url: str, payload: dict) -> httpx.Response:
         headers = {
             "Authorization": f"Bearer {self.settings.openrouter_api_key}",
             "Content-Type": "application/json",
@@ -75,13 +102,13 @@ class OpenRouter:
             "X-Title": "OpenAgent",
         }
         try:
-            response = await self._client.post(API_URL, headers=headers, json=payload)
+            response = await self._client.post(url, headers=headers, json=payload)
         except httpx.HTTPError as exc:
             raise LLMError(f"Could not reach OpenRouter: {exc}") from exc
         if response.status_code in {429, 502, 503}:
             log.warning("OpenRouter %s, retrying once", response.status_code)
             try:
-                response = await self._client.post(API_URL, headers=headers, json=payload)
+                response = await self._client.post(url, headers=headers, json=payload)
             except httpx.HTTPError as exc:
                 raise LLMError(f"Could not reach OpenRouter: {exc}") from exc
         return response

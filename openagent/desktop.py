@@ -124,6 +124,18 @@ class Desktop:
     def clipboard_get(self) -> str:
         return self.run(self._clipboard_get, 15)
 
+    def clipboard_set(self, text: str) -> str:
+        return self.run(lambda: self._clipboard_set(text), 15)
+
+    def screen_locked(self) -> str | None:
+        return self.run(self._locked, 10)
+
+    def cursor_prompt(self, folder: str, text: str, send: bool) -> str:
+        return self.run(lambda: self._cursor_prompt(folder, text, send), 40)
+
+    def window_action(self, title: str, action: str, monitor: int) -> str:
+        return self.run(lambda: self._window_action(title, action, monitor), 20)
+
     def _locked(self) -> str | None:
         try:
             if auto.IsDesktopLocked():
@@ -281,26 +293,11 @@ class Desktop:
             clicked = self._click_control(control_name, None, None)
             if not clicked.startswith("Clicked"):
                 return clicked
-        previous = None
-        try:
-            previous = auto.GetClipboardText()
-        except Exception:
-            previous = None
-        if not auto.SetClipboardText(text):
-            return "Could not put the text on the clipboard."
-        time.sleep(0.1)
-        if clear:
-            auto.SendKeys("{Ctrl}a", interval=0.01, waitTime=0.05)
-        auto.SendKeys("{Ctrl}v", interval=0.01, waitTime=0.05)
-        # The target app reads the clipboard when it handles the paste. Restoring too early pastes the old text.
-        time.sleep(0.4)
-        if previous is not None:
-            try:
-                auto.SetClipboardText(previous)
-            except Exception:
-                pass
+        pasted = self._paste(text, clear)
+        if not pasted.startswith("Pasted"):
+            return pasted
         target = control_name or "the focused control"
-        return f"Pasted {len(text)} characters into {target}. The mouse and caret should have moved."
+        return f"{pasted} into {target}. The mouse and caret should have moved."
 
     def _press_keys(self, chord: str) -> str:
         locked = self._locked()
@@ -427,6 +424,131 @@ class Desktop:
         if len(text) > 4000:
             return text[:4000] + "\n... truncated"
         return text
+
+    def _clipboard_set(self, text: str) -> str:
+        if not text:
+            return "clipboard_set needs text."
+        if len(text) > 20000:
+            return "That text is too long for the clipboard tool (20000 characters)."
+        if not auto.SetClipboardText(text):
+            return "Could not write the clipboard."
+        return f"Copied {len(text)} characters to the clipboard."
+
+    def _cursor_prompt(self, folder: str, text: str, send: bool) -> str:
+        locked = self._locked()
+        if locked:
+            return locked
+        body = text.strip()
+        if not body:
+            return "cursor_prompt needs the text to paste into Cursor."
+        if len(body) > 12000:
+            return "That prompt is too long (12000 characters)."
+        opened = _open_cursor(folder)
+        if not opened.startswith("Opened Cursor"):
+            return opened
+        hint = ""
+        if " in " in opened:
+            hint = os.path.basename(opened.split(" in ", 1)[1].rstrip("."))
+        title = _wait_window(hint or "Cursor", 12)
+        if not title:
+            return opened + " Cursor's window did not appear, so the prompt was not pasted."
+        focused = self._focus_window(title)
+        if not focused.startswith("Focused"):
+            return opened + " " + focused
+        time.sleep(0.3)
+        if not self._open_agent_input(title):
+            return opened + " Cursor is open, but the agent input was not found, so nothing was pasted."
+        pasted = self._paste(body, clear=False)
+        if not pasted.startswith("Pasted"):
+            return opened + " " + pasted
+        if send:
+            time.sleep(0.15)
+            auto.SendKeys("{Enter}", interval=0.01, waitTime=0.05)
+            return f"{opened} Opened the agent panel, pasted {len(body)} characters, and pressed Enter."
+        return f"{opened} Opened the agent panel and pasted {len(body)} characters without sending."
+
+    def _window_action(self, title: str, action: str, monitor: int) -> str:
+        locked = self._locked()
+        if locked:
+            return locked
+        kind = action.strip().lower()
+        if kind not in {"minimize", "maximize", "restore", "move"}:
+            return "window action must be minimize, maximize, restore, or move."
+        matches = _top_matches(title)
+        if not matches:
+            return f"No window title contains {title!r}."
+        window = matches[0]
+        hwnd = int(_safe(lambda: window.NativeWindowHandle) or 0)
+        if not hwnd:
+            return "That window has no handle."
+        name = _safe(lambda: window.Name) or title
+        _USER32.ShowWindow.argtypes = [ctypes.c_void_p, ctypes.c_int]
+        _USER32.ShowWindow.restype = ctypes.c_int
+        _USER32.SetWindowPos.argtypes = [
+            ctypes.c_void_p,
+            ctypes.c_void_p,
+            ctypes.c_int,
+            ctypes.c_int,
+            ctypes.c_int,
+            ctypes.c_int,
+            ctypes.c_uint,
+        ]
+        _USER32.SetWindowPos.restype = ctypes.c_bool
+        handle = ctypes.c_void_p(hwnd)
+        if kind == "minimize":
+            _USER32.ShowWindow(handle, 6)
+            return f"Minimized {name}."
+        if kind == "maximize":
+            _USER32.ShowWindow(handle, 3)
+            return f"Maximized {name}."
+        if kind == "restore":
+            _USER32.ShowWindow(handle, 9)
+            return f"Restored {name}."
+        monitors = list(auto.GetMonitorsRect() or [])
+        if not monitors:
+            return "No monitors were found."
+        index = max(1, min(int(monitor or 1), len(monitors))) - 1
+        area = monitors[index]
+        _USER32.ShowWindow(handle, 9)
+        time.sleep(0.15)
+        width, height = _window_size(handle)
+        mon_w = max(200, int(area.right - area.left))
+        mon_h = max(200, int(area.bottom - area.top))
+        width = min(max(400, width), mon_w - 40)
+        height = min(max(300, height), mon_h - 40)
+        left = int(area.left) + max(0, (mon_w - width) // 2)
+        top = int(area.top) + max(0, (mon_h - height) // 2)
+        _USER32.SetWindowPos(handle, None, left, top, width, height, 0x0004)
+        return f"Moved {name} to monitor {index + 1}."
+
+    def _open_agent_input(self, title: str) -> bool:
+        for _ in range(2):
+            auto.SendKeys("{Ctrl}i", interval=0.01, waitTime=0.2)
+            time.sleep(0.45)
+            matches = _top_matches(title) or _top_matches("Cursor")
+            if matches and _click_prompt(matches[0]):
+                return True
+        return False
+
+    def _paste(self, text: str, clear: bool) -> str:
+        previous = None
+        try:
+            previous = auto.GetClipboardText()
+        except Exception:
+            previous = None
+        if not auto.SetClipboardText(text):
+            return "Could not put the text on the clipboard."
+        time.sleep(0.1)
+        if clear:
+            auto.SendKeys("{Ctrl}a", interval=0.01, waitTime=0.05)
+        auto.SendKeys("{Ctrl}v", interval=0.01, waitTime=0.05)
+        time.sleep(0.4)
+        if previous is not None:
+            try:
+                auto.SetClipboardText(previous)
+            except Exception:
+                pass
+        return f"Pasted {len(text)} characters."
 
     def _to_screen(self, x: int, y: int, coordinate_space: str) -> tuple[int, int]:
         if coordinate_space != "image":
@@ -692,6 +814,81 @@ def _kernel32():
 
 _USER32 = _user32()
 _KERNEL32 = _kernel32()
+
+
+def _window_size(handle) -> tuple[int, int]:
+    rect = ctypes.wintypes.RECT()
+    _USER32.GetWindowRect.argtypes = [ctypes.c_void_p, ctypes.POINTER(ctypes.wintypes.RECT)]
+    _USER32.GetWindowRect.restype = ctypes.c_bool
+    if not _USER32.GetWindowRect(handle, ctypes.byref(rect)):
+        return 1100, 700
+    return max(1, int(rect.right - rect.left)), max(1, int(rect.bottom - rect.top))
+
+
+def _click_prompt(window) -> bool:
+    target = _find_prompt(window)
+    if target is None:
+        return False
+    point = _safe(lambda: target.MoveCursorToInnerPos(simulateMove=True))
+    if not point:
+        return False
+    _pointer("left")
+    return True
+
+
+def _find_prompt(window):
+    named = []
+    edits = []
+    seen = 0
+
+    def walk(control, depth: int) -> None:
+        nonlocal seen
+        if control is None or depth > 7 or seen > 180:
+            return
+        seen += 1
+        kind = _safe(lambda: control.ControlTypeName) or ""
+        name = (_safe(lambda: control.Name) or "").lower()
+        rect = _safe(lambda: control.BoundingRectangle)
+        height = 0
+        if rect is not None:
+            try:
+                height = int(rect.height())
+            except Exception:
+                height = 0
+        tokens = ("plan,", "follow-up", "follow up", "ask a", "message cursor")
+        if depth > 0 and any(token in name for token in tokens):
+            named.append(control)
+            return
+        top = 0
+        if rect is not None:
+            try:
+                top = int(rect.top)
+            except Exception:
+                top = 0
+        if kind in {"Edit", "Document"} and 24 <= height <= 200:
+            edits.append((top, control))
+        for child in _safe(lambda: control.GetChildren()) or []:
+            walk(child, depth + 1)
+
+    walk(window, 0)
+    if named:
+        return named[0]
+    if not edits:
+        return None
+    edits.sort(key=lambda item: item[0], reverse=True)
+    return edits[0][1]
+
+
+def _wait_window(hint: str, seconds: float) -> str | None:
+    deadline = time.time() + seconds
+    while time.time() < deadline:
+        matches = _top_matches(hint) if hint else []
+        if not matches and hint.lower() != "cursor":
+            matches = _top_matches("Cursor")
+        if matches:
+            return _safe(lambda item=matches[0]: item.Name) or hint
+        time.sleep(0.4)
+    return None
 
 
 def _top_matches(title: str) -> list:

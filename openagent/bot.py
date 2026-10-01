@@ -4,8 +4,10 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 import threading
 from dataclasses import dataclass, field
+from io import BytesIO
 
 from aiogram import Bot, Dispatcher, F, Router
 from aiogram.client.default import DefaultBotProperties
@@ -15,16 +17,20 @@ from aiogram.filters import Command, CommandStart
 from aiogram.types import (
     BufferedInputFile,
     CallbackQuery,
+    FSInputFile,
     InlineKeyboardButton,
     InlineKeyboardMarkup,
     Message,
 )
+from PIL import Image
 
-from openagent.agent import AgentEvents, fresh_history, run_agent
+from openagent.agent import AgentEvents, combine_notes, fresh_history, run_agent
 from openagent.config import Settings
 from openagent.desktop import Desktop
+from openagent.files import save_upload
 from openagent.format_tg import (
     chunks,
+    escape,
     render_confirm,
     render_error,
     render_final,
@@ -36,7 +42,9 @@ from openagent.format_tg import (
     render_stopped,
     render_welcome,
 )
-from openagent.llm import OpenRouter
+from openagent.llm import LLMError, OpenRouter
+from openagent.memory import Memory
+from openagent.schedule import Schedule
 
 log = logging.getLogger("openagent.bot")
 
@@ -57,6 +65,8 @@ class App:
         self.settings = settings
         self.desktop = desktop
         self.llm = llm
+        self.memory = Memory(settings.root / "data" / "memory.json")
+        self.schedule = Schedule(settings.root / "data" / "schedules.json")
         self.sessions: dict[int, Session] = {}
 
     def session(self, user_id: int) -> Session:
@@ -105,6 +115,49 @@ def build_router(app: App) -> Router:
         session.messages = fresh_history()
         await _send(message.bot, message.chat.id, "<b>Reset</b>\n<i>Forgot the previous conversation. Send a new task.</i>")
 
+    @router.message(Command("schedule"))
+    async def schedule_cmd(message: Message) -> None:
+        if not await _gate(app, message):
+            return
+        await _send(message.bot, message.chat.id, f"<b>Schedule</b>\n<pre>{escape(app.schedule.listing())}</pre>")
+
+    @router.message(F.voice | F.audio)
+    async def on_voice(message: Message) -> None:
+        if not await _gate(app, message):
+            return
+        media = message.voice or message.audio
+        if media is None or (media.file_size or 0) > _MAX_UPLOAD:
+            await _send(message.bot, message.chat.id, "<i>That audio is too large to transcribe.</i>")
+            return
+        try:
+            data = await _download(message, media.file_id)
+            heard, cost = await app.llm.transcribe(data, _audio_format(message))
+        except LLMError as exc:
+            await _send(message.bot, message.chat.id, render_error(str(exc)))
+            return
+        await _send(message.bot, message.chat.id, f"<b>Heard</b>\n<blockquote>{escape(heard[:700])}</blockquote>")
+        if await _accept(app, message, heard, seed_cost=cost):
+            await _send(message.bot, message.chat.id, render_queued())
+
+    @router.message(F.photo | F.document | F.video)
+    async def on_file(message: Message) -> None:
+        if not await _gate(app, message):
+            return
+        try:
+            saved, image, note = await _store_incoming(app, message)
+        except Exception as exc:
+            log.exception("Could not save an attachment")
+            await _send(message.bot, message.chat.id, render_error(str(exc)))
+            return
+        if note:
+            await _send(message.bot, message.chat.id, note)
+            return
+        caption = (message.caption or "").strip()
+        task = caption or "The user sent a file. Decide what to do with it."
+        task = f"{task}\nSaved file: {saved}"
+        if await _accept(app, message, task, image=image):
+            await _send(message.bot, message.chat.id, render_queued())
+
     @router.message(F.text)
     async def on_text(message: Message) -> None:
         if not await _gate(app, message):
@@ -115,14 +168,7 @@ def build_router(app: App) -> Router:
         if text.startswith("/"):
             await _send(message.bot, message.chat.id, "<i>Unknown command. See /help.</i>")
             return
-        session = app.session(message.from_user.id)
-        async with session.lock:
-            running = session.task is not None and not session.task.done()
-            if running:
-                await session.inbox.put(text)
-            else:
-                session.cancel.clear()
-                session.task = asyncio.create_task(_run(app, message, session, text))
+        running = await _accept(app, message, text)
         if running:
             await _send(message.bot, message.chat.id, render_queued())
 
@@ -156,8 +202,37 @@ def build_router(app: App) -> Router:
     return router
 
 
-async def _run(app: App, message: Message, session: Session, text: str) -> None:
-    ui = ChatUI(message.bot, message.chat.id, session)
+async def _accept(
+    app: App,
+    message: Message,
+    text: str,
+    image: bytes | None = None,
+    seed_cost: float = 0.0,
+) -> bool:
+    session = app.session(message.from_user.id)
+    async with session.lock:
+        running = session.task is not None and not session.task.done()
+        if running:
+            await session.inbox.put((text, image, seed_cost))
+            return True
+        session.cancel.clear()
+        session.task = asyncio.create_task(
+            _run(app, message.bot, message.chat.id, message.from_user.id, session, text, image, seed_cost)
+        )
+        return False
+
+
+async def _run(
+    app: App,
+    bot: Bot,
+    chat_id: int,
+    user_id: int,
+    session: Session,
+    text: str,
+    image: bytes | None = None,
+    seed_cost: float = 0.0,
+) -> None:
+    ui = ChatUI(bot, chat_id, session)
     try:
         await ui.started(text)
         events = AgentEvents(
@@ -169,8 +244,22 @@ async def _run(app: App, message: Message, session: Session, text: str) -> None:
             final=ui.final,
             stopped=ui.stopped,
             fail=ui.fail,
+            send_file=ui.send_file,
         )
-        await run_agent(app.settings, app.llm, app.desktop, session.messages, text, events)
+        await run_agent(
+            app.settings,
+            app.llm,
+            app.desktop,
+            session.messages,
+            text,
+            events,
+            memory=app.memory,
+            schedule=app.schedule,
+            user_id=user_id,
+            chat_id=chat_id,
+            image=image,
+            seed_cost=seed_cost,
+        )
     except asyncio.CancelledError:
         await ui.stopped()
     except Exception:
@@ -181,8 +270,11 @@ async def _run(app: App, message: Message, session: Session, text: str) -> None:
         async with session.lock:
             pending = _drain(session.inbox)
             if pending:
+                follow_text, follow_image, follow_cost = combine_notes(pending)
                 session.cancel.clear()
-                session.task = asyncio.create_task(_run(app, message, session, "\n".join(pending)))
+                session.task = asyncio.create_task(
+                    _run(app, bot, chat_id, user_id, session, follow_text, follow_image, follow_cost)
+                )
 
 
 def _drain(inbox: asyncio.Queue) -> list[str]:
@@ -303,6 +395,25 @@ class ChatUI:
         await self.clear_keyboard()
         await _send(self.bot, self.chat_id, render_error(text, footer))
 
+    async def send_file(self, path: str) -> str:
+        try:
+            size = os.path.getsize(path)
+        except OSError as exc:
+            return f"Could not read {path}: {exc}"
+        if size <= 0:
+            return "That file is empty."
+        if size > 45 * 1024 * 1024:
+            return "That file is larger than 45 MB, so Telegram will not take it."
+        try:
+            await self.bot.send_document(
+                self.chat_id,
+                FSInputFile(path),
+                caption=escape(os.path.basename(path))[:900],
+            )
+        except TelegramBadRequest as exc:
+            return f"Telegram refused the file: {exc}"
+        return f"Sent {path} ({size} bytes) to Telegram."
+
     async def confirm(self, command: str, reason: str) -> bool:
         loop = asyncio.get_running_loop()
         future: asyncio.Future = loop.create_future()
@@ -413,14 +524,108 @@ def _strip_tags(text: str) -> str:
     return re.sub(r"<[^>]+>", "", text)
 
 
+_MAX_UPLOAD = 20 * 1024 * 1024
+
+
+async def _download(message: Message, file_id: str) -> bytes:
+    remote = await message.bot.get_file(file_id)
+    buffer = BytesIO()
+    await message.bot.download_file(remote.file_path, buffer)
+    return buffer.getvalue()
+
+
+def _audio_format(message: Message) -> str:
+    if message.voice:
+        return "ogg"
+    name = ""
+    if message.audio and message.audio.file_name:
+        name = message.audio.file_name
+    ext = name.rsplit(".", 1)[-1].lower() if "." in name else "mp3"
+    if ext in {"mp3", "wav", "flac", "m4a", "ogg", "webm", "aac"}:
+        return ext
+    return "mp3"
+
+
+async def _store_incoming(app: App, message: Message) -> tuple[str, bytes | None, str]:
+    inbox = app.settings.root / "inbox"
+    if message.photo:
+        media = message.photo[-1]
+        if (media.file_size or 0) > _MAX_UPLOAD:
+            return "", None, "<i>That photo is too large.</i>"
+        data = await _download(message, media.file_id)
+        path = save_upload(inbox, "photo.jpg", data)
+        return str(path), _jpeg(data), ""
+    if message.document:
+        document = message.document
+        if (document.file_size or 0) > _MAX_UPLOAD:
+            return "", None, "<i>That file is larger than 20 MB.</i>"
+        data = await _download(message, document.file_id)
+        path = save_upload(inbox, document.file_name or "file")
+        mime = document.mime_type or ""
+        image = _jpeg(data) if mime.startswith("image/") else None
+        return str(path), image, ""
+    if message.video:
+        video = message.video
+        if (video.file_size or 0) > _MAX_UPLOAD:
+            return "", None, "<i>That video is larger than 20 MB.</i>"
+        data = await _download(message, video.file_id)
+        path = save_upload(inbox, video.file_name or "video.mp4", data)
+        return str(path), None, ""
+    return "", None, "<i>Nothing was attached.</i>"
+
+
+def _jpeg(data: bytes) -> bytes | None:
+    try:
+        image = Image.open(BytesIO(data))
+        if image.mode != "RGB":
+            image = image.convert("RGB")
+        image.thumbnail((1600, 1600), Image.Resampling.LANCZOS)
+        buffer = BytesIO()
+        image.save(buffer, format="JPEG", quality=80)
+        return buffer.getvalue()
+    except Exception:
+        return None
+
+
+async def _watch_schedule(app: App, bot: Bot) -> None:
+    while True:
+        await asyncio.sleep(5)
+        try:
+            jobs = app.schedule.due()
+        except Exception:
+            log.exception("Could not read the schedule")
+            continue
+        for job in jobs:
+            try:
+                session = app.session(job.user_id)
+                await _send(
+                    bot,
+                    job.chat_id,
+                    f"<b>Scheduled</b>\n<blockquote>{escape(job.instruction[:500])}</blockquote>",
+                )
+                async with session.lock:
+                    running = session.task is not None and not session.task.done()
+                    if running:
+                        await session.inbox.put(job.instruction)
+                    else:
+                        session.cancel.clear()
+                        session.task = asyncio.create_task(
+                            _run(app, bot, job.chat_id, job.user_id, session, job.instruction)
+                        )
+            except Exception:
+                log.exception("Could not start scheduled task %s", job.id)
+
+
 async def serve(settings: Settings, desktop: Desktop, llm: OpenRouter) -> None:
     app = App(settings, desktop, llm)
     bot = Bot(settings.telegram_token, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
     dispatcher = Dispatcher()
     dispatcher.include_router(build_router(app))
     log.info("Telegram polling started. Model %s", settings.model)
+    watcher = asyncio.create_task(_watch_schedule(app, bot))
     try:
         await dispatcher.start_polling(bot)
     finally:
+        watcher.cancel()
         await bot.session.close()
         await llm.close()

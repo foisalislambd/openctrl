@@ -21,11 +21,19 @@ The PC must stay unlocked. On the lock screen or while asleep, the agent cannot 
 
 - The task stays at the top. Each step is a new message under it, in order, with Stop on the latest one
 - A screenshot is posted in that same sequence, with the step written on the picture
-- A summary at the end
+- A summary at the end, including the OpenRouter cost for that task
 - A message sent while a task is running becomes the next instruction
-- `/stop` cancels, `/reset` forgets the conversation, `/help` explains the commands
+- `/stop` cancels, `/reset` forgets the conversation, `/schedule` lists timers, `/help` explains the commands
 
-Disk format, shutdown, registry deletes, and recursive deletes of system folders wait for Allow. Everything else runs immediately.
+Send a file, a photo, or a voice note. Files land in `inbox`. A voice note is transcribed and then run. Ask the agent to send a file back and it posts it in the chat.
+
+You can tell it to open a folder in Cursor and paste an instruction into Cursor's agent panel. It can copy text to the clipboard, move or resize windows across monitors, and remember short notes such as the last folder.
+
+"Do this in 10 minutes" waits and then runs, as long as OpenAgent is open. The screen stays awake while a task is running. If the desktop is locked, it stops instead of clicking blindly. A task also stops to ask before it spends more than `MAX_TASK_COST`.
+
+With `START_WITH_WINDOWS=1`, a Startup shortcut opens OpenAgent when you log on. It still runs in the desktop session, not as a service.
+
+Disk format, shutdown, registry deletes, and recursive deletes of system folders wait for Allow. Everything else runs immediately. `.env` and key files are not sent back to Telegram.
 
 ## Limits
 

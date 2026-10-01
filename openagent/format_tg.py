@@ -83,7 +83,7 @@ def render_welcome(user_id: int, allowed: bool) -> str:
         "<b>Examples</b>\n"
         "<blockquote>Open Notepad and type: meeting tomorrow at 4</blockquote>\n"
         "<blockquote>Open Cursor in the openagent folder on the Desktop and send this text in the chat</blockquote>\n\n"
-        "<i>/help</i>  ·  <i>/stop</i>  ·  <i>/reset</i>\n"
+        "<i>/help</i>  ·  <i>/stop</i>  ·  <i>/reset</i>  ·  <i>/schedule</i>\n"
         f"<code>id {user_id}</code>"
     )
 
@@ -97,11 +97,17 @@ def render_help() -> str:
         "<b>Commands</b>\n"
         "• <code>/stop</code> — stop the current task\n"
         "• <code>/reset</code> — forget the conversation\n"
+        "• <code>/schedule</code> — list tasks waiting to run\n"
         "• <code>/help</code> — this message\n\n"
+        "<b>Also</b>\n"
+        "Send a file, a photo, or a voice note. Files are saved in the inbox and can be sent back. "
+        "A voice note is transcribed, then run as a task.\n"
+        "Say when something should happen later, up to 24 hours, while OpenAgent is open.\n"
+        "A task stops to ask before spending more than the cost limit.\n\n"
         "<b>While it is working</b>\n"
         "A new message is added as the next instruction.\n"
         "Disk format, shutdown, and registry deletes ask for Allow first.\n\n"
-        "<blockquote>If the PC is locked or asleep, the agent cannot see the screen.</blockquote>"
+        "<blockquote>If the PC is locked, the agent stops and asks you to unlock it. The screen stays awake during a task.</blockquote>"
     )
 
 
@@ -214,6 +220,12 @@ def humanize(name: str, args: dict) -> str:
         "scroll": "Scrolling",
         "drag": "Dragging",
         "clipboard_get": "Reading the clipboard",
+        "clipboard_set": "Copying to the clipboard",
+        "cursor_prompt": "Sending a prompt to Cursor",
+        "send_file": "Sending a file",
+        "window": f"{str(args.get('action') or 'Moving').capitalize()} {args.get('title', '')}".strip(),
+        "memory": "Saving a note" if args.get("action") == "write" else "Reading notes",
+        "schedule": "Scheduling a task",
         "wait": "Waiting",
     }
     return titles.get(name, name)

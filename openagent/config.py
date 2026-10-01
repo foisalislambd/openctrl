@@ -18,6 +18,9 @@ class Settings:
     provider_sort: str
     max_steps: int
     max_output_tokens: int
+    max_task_cost: float
+    transcribe_model: str
+    start_with_windows: bool
     root: Path
 
 
@@ -48,8 +51,30 @@ def load_settings() -> Settings:
         provider_sort=os.environ.get("OPENROUTER_PROVIDER_SORT", "exacto").strip(),
         max_steps=_int_env("MAX_STEPS", 30, low=5, high=80),
         max_output_tokens=_int_env("MAX_OUTPUT_TOKENS", 12000, low=1000, high=32000),
+        max_task_cost=_float_env("MAX_TASK_COST", 0.50, low=0.0, high=50.0),
+        transcribe_model=os.environ.get("OPENROUTER_TRANSCRIBE_MODEL", "openai/whisper-large-v3").strip()
+        or "openai/whisper-large-v3",
+        start_with_windows=_bool_env("START_WITH_WINDOWS", True),
         root=ROOT,
     )
+
+
+def _bool_env(name: str, default: bool) -> bool:
+    raw = os.environ.get(name, "").strip().lower()
+    if not raw:
+        return default
+    return raw in {"1", "true", "yes", "on"}
+
+
+def _float_env(name: str, default: float, low: float, high: float) -> float:
+    raw = os.environ.get(name, "").strip()
+    if not raw:
+        return default
+    try:
+        value = float(raw)
+    except ValueError:
+        return default
+    return max(low, min(high, value))
 
 
 def _int_env(name: str, default: int, low: int, high: int) -> int:

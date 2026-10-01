@@ -3,6 +3,8 @@
 __pycache__/
 *.py[cod]
 logs/
+inbox/
+data/
 *.jpg
 *.png
 .pytest_cache/

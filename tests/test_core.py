@@ -1,6 +1,20 @@
 import unittest
 
-from openagent.agent import RunStats, _as_bool, _footer, _repair_tool_calls, _trim, _usage_cost
+from openagent.agent import (
+    RunStats,
+    _as_bool,
+    _budget_hit,
+    _desktop_locked,
+    _footer,
+    _remember_cursor,
+    _repair_tool_calls,
+    _trim,
+    _usage_cost,
+    combine_notes,
+)
+from openagent.files import resolve_send_path, save_upload
+from openagent.memory import Memory
+from openagent.schedule import Schedule
 from openagent.desktop import image_to_screen
 from openagent.format_tg import markdown_to_html, one_line
 from openagent.hotkeys import blocks_secure_attention, to_sendkeys
@@ -104,6 +118,76 @@ class CostTests(unittest.TestCase):
         self.assertIsNone(_usage_cost({}))
         self.assertEqual(_usage_cost({"cost": "0.5"}), 0.5)
         self.assertEqual(_usage_cost({"cost_details": {"upstream_inference_cost": 0.25}}), 0.25)
+
+
+class PowerTests(unittest.TestCase):
+    def test_budget_asks_again_after_each_block(self):
+        stats = RunStats(cost=0.50, cost_known=True, budget_blocks=1)
+        self.assertTrue(_budget_hit(stats, 0.50))
+        stats.budget_blocks = 2
+        self.assertFalse(_budget_hit(stats, 0.50))
+        self.assertFalse(_budget_hit(RunStats(cost=1, cost_known=False), 0.50))
+
+    def test_memory_round_trip(self):
+        import tempfile
+        from pathlib import Path
+
+        with tempfile.TemporaryDirectory() as folder:
+            memory = Memory(Path(folder) / "memory.json")
+            self.assertEqual(memory.write("last_cursor_folder", "C:\\work"), "Remembered last_cursor_folder.")
+            again = Memory(Path(folder) / "memory.json")
+            self.assertIn("last_cursor_folder", again.snapshot())
+            self.assertEqual(memory.write("last_cursor_folder", ""), "Forgot last_cursor_folder.")
+
+    def test_schedule_becomes_due(self):
+        import tempfile
+        from pathlib import Path
+
+        with tempfile.TemporaryDirectory() as folder:
+            schedule = Schedule(Path(folder) / "schedules.json")
+            schedule.add(1, 2, "open notepad", 15)
+            self.assertEqual(schedule.due(now=0), [])
+            ready = schedule.due(now=10**12)
+            self.assertEqual(len(ready), 1)
+            self.assertIn("Nothing", schedule.listing())
+
+    def test_uploads_and_secret_files(self):
+        import tempfile
+        from pathlib import Path
+
+        with tempfile.TemporaryDirectory() as folder:
+            inbox = Path(folder)
+            path = save_upload(inbox, "my file.txt", b"hello")
+            self.assertTrue(path.is_file())
+            found, error = resolve_send_path(path.name, inbox)
+            self.assertIsNone(error)
+            self.assertEqual(found, str(path.resolve()))
+            secret = inbox / ".env"
+            secret.write_text("nope", encoding="utf-8")
+            found, error = resolve_send_path(str(secret), inbox)
+            self.assertIsNone(found)
+            self.assertIn("secret", error)
+            local = inbox / ".env.local"
+            local.write_text("nope", encoding="utf-8")
+            found, error = resolve_send_path(str(local), inbox)
+            self.assertIsNone(found)
+
+    def test_queued_notes_keep_the_picture_and_cost(self):
+        text, image, cost = combine_notes(["open notepad", ("look at this", b"jpeg", 0.02)])
+        self.assertIn("open notepad", text)
+        self.assertIn("look at this", text)
+        self.assertEqual(image, b"jpeg")
+        self.assertAlmostEqual(cost, 0.02)
+        self.assertTrue(_desktop_locked("Tool error: The Windows desktop is locked. Unlock the PC."))
+
+    def test_cursor_folder_is_remembered(self):
+        import tempfile
+        from pathlib import Path
+
+        with tempfile.TemporaryDirectory() as folder:
+            memory = Memory(Path(folder) / "memory.json")
+            _remember_cursor(memory, r"Opened Cursor in C:\Work\demo. Opened the agent panel.")
+            self.assertIn(r"C:\Work\demo", memory.read("last_cursor_folder"))
 
 
 if __name__ == "__main__":
