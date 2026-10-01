@@ -29,7 +29,7 @@ from openagent.format_tg import (
     render_error,
     render_final,
     render_help,
-    render_photo_caption,
+    render_caption,
     render_progress,
     render_queued,
     render_started,
@@ -245,6 +245,10 @@ class ChatUI:
         self.bot = bot
         self.chat_id = chat_id
         self.session = session
+        self.latest: Message | None = None
+        self.latest_photo: Message | None = None
+        self.card: tuple[int, int, str, str, str] = (0, 0, "", "", "")
+        self._photo_size: tuple[int, int] = (0, 0)
 
     async def started(self, task: str) -> None:
         self.session.status = await _send(
@@ -255,25 +259,36 @@ class ChatUI:
         )
 
     async def progress(self, step: int, max_steps: int, narration: str, action: str, detail: str, result: str) -> None:
+        self.card = (step, max_steps, narration, action, detail)
+        if not result:
+            body = render_progress(step, max_steps, narration, action, detail, "")
+            await self._new_step(body)
+            return
+        if self.latest_photo is not None:
+            caption = render_caption(step, max_steps, narration, action, detail, result, *self._photo_size)
+            await self._edit_caption(self.latest_photo, caption)
+            return
         body = render_progress(step, max_steps, narration, action, detail, result)
-        await self._edit(body, _stop_keyboard())
+        if self.latest is not None:
+            await self._edit_text(self.latest, body)
+            return
+        await self._new_step(body)
 
     async def photo(self, data: bytes, width: int, height: int) -> None:
-        try:
-            await self.bot.send_photo(
-                self.chat_id,
-                BufferedInputFile(data, filename="screen.jpg"),
-                caption=render_photo_caption(width, height),
-            )
-        except TelegramRetryAfter as exc:
-            await asyncio.sleep(exc.retry_after)
-            await self.bot.send_photo(
-                self.chat_id,
-                BufferedInputFile(data, filename="screen.jpg"),
-                caption=render_photo_caption(width, height),
-            )
-        except TelegramBadRequest:
-            log.exception("Could not send screenshot")
+        step, max_steps, narration, action, detail = self.card
+        caption = render_caption(step, max_steps, narration, action, detail, "", width, height)
+        self._photo_size = (width, height)
+        if self.latest is not None:
+            try:
+                await self.latest.delete()
+            except TelegramBadRequest:
+                await self._strip_keyboard(self.latest)
+            self.latest = None
+        message = await self._send_photo(data, caption)
+        if message is None:
+            return
+        self.latest_photo = message
+        self.session.status = message
 
     async def final(self, text: str, footer: str) -> None:
         await self.clear_keyboard()
@@ -307,32 +322,69 @@ class ChatUI:
             self.session.confirms.pop(token, None)
 
     async def clear_keyboard(self) -> None:
-        status = self.session.status
-        if status is None:
-            return
-        try:
-            await status.edit_reply_markup(reply_markup=None)
-        except TelegramBadRequest:
-            pass
+        await self._strip_keyboard(self.session.status)
 
-    async def _edit(self, text: str, markup: InlineKeyboardMarkup) -> None:
-        status = self.session.status
-        if status is None:
-            self.session.status = await _send(self.bot, self.chat_id, text, reply_markup=markup)
-            return
+    async def _new_step(self, body: str) -> None:
+        await self._strip_keyboard(self.session.status)
+        message = await _send(self.bot, self.chat_id, body, reply_markup=_stop_keyboard())
+        self.latest = message
+        self.latest_photo = None
+        self.session.status = message
+
+    async def _edit_text(self, message: Message, body: str) -> None:
         try:
-            await status.edit_text(text, reply_markup=markup)
+            await message.edit_text(body, reply_markup=_stop_keyboard())
         except TelegramRetryAfter as exc:
             await asyncio.sleep(exc.retry_after)
             try:
-                await status.edit_text(text, reply_markup=markup)
+                await message.edit_text(body, reply_markup=_stop_keyboard())
             except TelegramBadRequest:
                 pass
         except TelegramBadRequest as exc:
-            if "not modified" in str(exc).lower():
-                return
-            log.warning("Status edit failed: %s", exc)
-            self.session.status = await _send(self.bot, self.chat_id, text, reply_markup=markup)
+            if "not modified" not in str(exc).lower():
+                log.warning("Step edit failed: %s", exc)
+
+    async def _edit_caption(self, message: Message, caption: str) -> None:
+        try:
+            await message.edit_caption(caption=caption, reply_markup=_stop_keyboard())
+        except TelegramRetryAfter as exc:
+            await asyncio.sleep(exc.retry_after)
+            try:
+                await message.edit_caption(caption=caption, reply_markup=_stop_keyboard())
+            except TelegramBadRequest:
+                pass
+        except TelegramBadRequest as exc:
+            if "not modified" not in str(exc).lower():
+                log.warning("Caption edit failed: %s", exc)
+
+    async def _send_photo(self, data: bytes, caption: str) -> Message | None:
+        photo = BufferedInputFile(data, filename="screen.jpg")
+        try:
+            return await self.bot.send_photo(
+                self.chat_id,
+                photo,
+                caption=caption,
+                reply_markup=_stop_keyboard(),
+            )
+        except TelegramRetryAfter as exc:
+            await asyncio.sleep(exc.retry_after)
+            return await self.bot.send_photo(
+                self.chat_id,
+                BufferedInputFile(data, filename="screen.jpg"),
+                caption=caption,
+                reply_markup=_stop_keyboard(),
+            )
+        except TelegramBadRequest:
+            log.exception("Could not send screenshot")
+            return None
+
+    async def _strip_keyboard(self, message: Message | None) -> None:
+        if message is None:
+            return
+        try:
+            await message.edit_reply_markup(reply_markup=None)
+        except TelegramBadRequest:
+            pass
 
 
 def _token() -> str:

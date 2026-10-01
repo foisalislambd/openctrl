@@ -19,8 +19,8 @@ The PC must stay unlocked. On the lock screen or while asleep, the agent cannot 
 
 ## In the chat
 
-- One live status message, with a Stop button
-- A photo when a screenshot is needed
+- The task stays at the top. Each step is a new message under it, in order, with Stop on the latest one
+- A screenshot is posted in that same sequence, with the step written on the picture
 - A summary at the end
 - A message sent while a task is running becomes the next instruction
 - `/stop` cancels, `/reset` forgets the conversation, `/help` explains the commands

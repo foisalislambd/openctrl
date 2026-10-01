@@ -121,22 +121,52 @@ def render_progress(
     detail: str,
     result: str,
 ) -> str:
+    return _step_card(step, max_steps, narration, action, detail, result, detail_limit=700, result_limit=500)
+
+
+def render_caption(
+    step: int,
+    max_steps: int,
+    narration: str,
+    action: str,
+    detail: str,
+    result: str,
+    width: int,
+    height: int,
+) -> str:
+    card = _step_card(step, max_steps, narration, action, detail, result, detail_limit=180, result_limit=280)
+    caption = f"{card}\n<i>{width}×{height}</i>"
+    if len(caption) <= 1000:
+        return caption
+    short = _step_card(step, max_steps, narration, action, "", "", detail_limit=0, result_limit=0)
+    return f"{short}\n<i>{width}×{height}</i>"
+
+
+def _step_card(
+    step: int,
+    max_steps: int,
+    narration: str,
+    action: str,
+    detail: str,
+    result: str,
+    detail_limit: int,
+    result_limit: int,
+) -> str:
     lines = [
-        f"<b>OpenAgent</b>  ·  <code>{step}/{max_steps}</code>",
-        "",
+        f"<b>Step {step}/{max_steps}</b>  ·  <code>{escape(action or 'working')}</code>",
         f"<blockquote>{escape(narration or action or 'Working')}</blockquote>",
     ]
-    if action:
-        lines.append("")
-        lines.append(f"<b>{escape(action)}</b>")
-    if detail:
-        lines.append(f"<pre>{escape(detail[:700])}</pre>")
-    if result:
-        preview = result.strip()
-        if len(preview) > 500:
-            preview = preview[:500] + "…"
-        lines.append(f"<pre>{escape(preview)}</pre>")
+    if detail and detail_limit:
+        lines.append(f"<pre>{escape(_clip(detail, detail_limit))}</pre>")
+    if result and result_limit:
+        lines.append(f"<pre>{escape(_clip(result.strip(), result_limit))}</pre>")
     return "\n".join(lines)
+
+
+def _clip(text: str, limit: int) -> str:
+    if len(text) <= limit:
+        return text
+    return text[: limit - 1] + "…"
 
 
 def render_final(text: str, footer: str) -> str:
@@ -164,10 +194,6 @@ def render_confirm(command: str, reason: str) -> str:
         f"<pre>{escape(one_line(command, 900))}</pre>\n"
         "<i>The command will not run unless you press Allow.</i>"
     )
-
-
-def render_photo_caption(width: int, height: int) -> str:
-    return f"<b>Screen</b>  ·  <code>{width}×{height}</code>"
 
 
 def humanize(name: str, args: dict) -> str:
