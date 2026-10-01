@@ -48,6 +48,8 @@ class RunStats:
     steps: int = 0
     prompt_tokens: int = 0
     completion_tokens: int = 0
+    cost: float = 0.0
+    cost_known: bool = False
 
 
 @dataclass
@@ -80,20 +82,21 @@ async def run_agent(
     try:
         for step in range(1, settings.max_steps + 1):
             if events.cancel.is_set():
-                await events.stopped()
+                await events.stopped(_footer(stats, stats.steps))
                 return
             _pull_inbox(messages, events.inbox)
             _prepare(messages)
             try:
                 message, usage = await _complete(llm, messages, events.cancel)
             except asyncio.CancelledError:
-                await events.stopped()
+                await events.stopped(_footer(stats, stats.steps))
                 return
             except LLMError as exc:
-                await events.fail(str(exc))
+                await events.fail(str(exc), _footer(stats, stats.steps))
                 return
             stats.prompt_tokens += int(usage.get("prompt_tokens") or 0)
             stats.completion_tokens += int(usage.get("completion_tokens") or 0)
+            _add_cost(stats, usage)
             tool_calls = message.get("tool_calls") or []
             narration = one_line(_text(message.get("content")))
             messages.append(_assistant_record(message))
@@ -105,7 +108,8 @@ async def run_agent(
             for call in tool_calls:
                 if events.cancel.is_set():
                     messages.append(_tool_message(call, "Cancelled by the user."))
-                    continue
+                    await events.stopped(_footer(stats, stats.steps))
+                    return
                 name, args = _parse_call(call)
                 await events.progress(
                     step=step,
@@ -309,8 +313,31 @@ def _cap(text: str, limit: int) -> str:
     return text[:limit] + "\n... truncated"
 
 
+def _add_cost(stats: RunStats, usage: dict) -> None:
+    amount = _usage_cost(usage)
+    if amount is None:
+        return
+    stats.cost += amount
+    stats.cost_known = True
+
+
+def _usage_cost(usage: dict) -> float | None:
+    raw = usage.get("cost")
+    if raw is None:
+        raw = (usage.get("cost_details") or {}).get("upstream_inference_cost")
+    if raw is None:
+        return None
+    try:
+        return float(raw)
+    except (TypeError, ValueError):
+        return None
+
+
 def _footer(stats: RunStats, steps: int) -> str:
-    return f"{steps} steps · {_compact(stats.prompt_tokens)} in · {_compact(stats.completion_tokens)} out"
+    tokens = f"{steps} steps · {_compact(stats.prompt_tokens)} in · {_compact(stats.completion_tokens)} out"
+    if stats.cost_known:
+        return f"{tokens} · cost ${stats.cost:.6f}"
+    return f"{tokens} · cost n/a"
 
 
 def _compact(value: int) -> str:

@@ -295,13 +295,13 @@ class ChatUI:
         for part in chunks(render_final(text, footer)):
             await _send(self.bot, self.chat_id, part)
 
-    async def stopped(self) -> None:
+    async def stopped(self, footer: str = "") -> None:
         await self.clear_keyboard()
-        await _send(self.bot, self.chat_id, render_stopped())
+        await _send(self.bot, self.chat_id, render_stopped(footer))
 
-    async def fail(self, text: str) -> None:
+    async def fail(self, text: str, footer: str = "") -> None:
         await self.clear_keyboard()
-        await _send(self.bot, self.chat_id, render_error(text))
+        await _send(self.bot, self.chat_id, render_error(text, footer))
 
     async def confirm(self, command: str, reason: str) -> bool:
         loop = asyncio.get_running_loop()

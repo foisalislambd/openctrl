@@ -175,12 +175,14 @@ def render_final(text: str, footer: str) -> str:
     return f"<b>✓ Done</b>\n\n{body}{foot}"
 
 
-def render_stopped() -> str:
-    return "<b>■ Stopped</b>\n<i>Send another task whenever you want.</i>"
+def render_stopped(footer: str = "") -> str:
+    foot = f"\n<i>{escape(footer)}</i>" if footer else ""
+    return f"<b>■ Stopped</b>\n<i>Send another task whenever you want.</i>{foot}"
 
 
-def render_error(text: str) -> str:
-    return f"<b>Blocked</b>\n<pre>{escape(one_line(text, 1200))}</pre>"
+def render_error(text: str, footer: str = "") -> str:
+    foot = f"\n<i>{escape(footer)}</i>" if footer else ""
+    return f"<b>Blocked</b>\n<pre>{escape(one_line(text, 1200))}</pre>{foot}"
 
 
 def render_queued() -> str:

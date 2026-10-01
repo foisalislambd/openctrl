@@ -33,6 +33,7 @@ class OpenRouter:
             "tool_choice": "auto",
             "parallel_tool_calls": False,
             "max_tokens": self.settings.max_output_tokens,
+            "usage": {"include": True},
         }
         if self.settings.provider_sort:
             payload["provider"] = {"sort": self.settings.provider_sort}
@@ -47,6 +48,9 @@ class OpenRouter:
             response = await self._post(payload)
         if response.status_code == 400 and "parallel_tool_calls" in response.text and "parallel_tool_calls" in payload:
             payload.pop("parallel_tool_calls", None)
+            response = await self._post(payload)
+        if response.status_code == 400 and "usage" in response.text.lower() and "usage" in payload:
+            payload.pop("usage", None)
             response = await self._post(payload)
         if response.status_code >= 400:
             raise LLMError(f"OpenRouter {response.status_code}: {response.text[:800]}")

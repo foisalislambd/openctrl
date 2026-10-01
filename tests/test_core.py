@@ -1,6 +1,6 @@
 import unittest
 
-from openagent.agent import _as_bool, _repair_tool_calls, _trim
+from openagent.agent import RunStats, _as_bool, _footer, _repair_tool_calls, _trim, _usage_cost
 from openagent.desktop import image_to_screen
 from openagent.format_tg import markdown_to_html, one_line
 from openagent.hotkeys import blocks_secure_attention, to_sendkeys
@@ -91,6 +91,19 @@ class SafetyTests(unittest.TestCase):
         self.assertIsNotNone(danger_reason("shutdown /s /t 0"))
         self.assertIsNotNone(danger_reason("Remove-Item C:\\Windows -Recurse"))
         self.assertIsNotNone(danger_reason("reg delete HKLM\\Software\\Foo /f"))
+
+
+class CostTests(unittest.TestCase):
+    def test_footer_shows_dollars(self):
+        stats = RunStats(prompt_tokens=1500, completion_tokens=40, cost=0.012345, cost_known=True)
+        self.assertIn("cost $0.012345", _footer(stats, 2))
+        self.assertIn("1.5k in", _footer(stats, 2))
+
+    def test_missing_cost_is_marked(self):
+        self.assertIn("cost n/a", _footer(RunStats(), 1))
+        self.assertIsNone(_usage_cost({}))
+        self.assertEqual(_usage_cost({"cost": "0.5"}), 0.5)
+        self.assertEqual(_usage_cost({"cost_details": {"upstream_inference_cost": 0.25}}), 0.25)
 
 
 if __name__ == "__main__":
