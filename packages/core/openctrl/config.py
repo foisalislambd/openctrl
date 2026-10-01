@@ -6,8 +6,6 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 
-ROOT = Path(__file__).resolve().parents[1]
-
 
 @dataclass(frozen=True)
 class Settings:
@@ -24,8 +22,9 @@ class Settings:
     root: Path
 
 
-def load_settings() -> Settings:
-    load_dotenv(ROOT / ".env")
+def load_settings(root: Path) -> Settings:
+    root = root.resolve()
+    load_dotenv(root / ".env")
     token = os.environ.get("TELEGRAM_BOT_TOKEN", "").strip()
     api_key = os.environ.get("OPENROUTER_API_KEY", "").strip()
     if not token or not api_key:
@@ -55,7 +54,7 @@ def load_settings() -> Settings:
         transcribe_model=os.environ.get("OPENROUTER_TRANSCRIBE_MODEL", "openai/whisper-large-v3").strip()
         or "openai/whisper-large-v3",
         start_with_windows=_bool_env("START_WITH_WINDOWS", True),
-        root=ROOT,
+        root=root,
     )
 
 

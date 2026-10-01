@@ -8,3 +8,4 @@ data/
 *.jpg
 *.png
 .pytest_cache/
+.instance.lock

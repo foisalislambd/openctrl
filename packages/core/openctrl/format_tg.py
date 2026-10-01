@@ -70,7 +70,7 @@ def render_welcome(user_id: int, allowed: bool) -> str:
     if not allowed:
         return (
             "<b>OpenCtrl</b>\n"
-            "This chat can control your Windows PC. You are not allowed yet.\n\n"
+            "This chat can control this computer. You are not allowed yet.\n\n"
             "<b>Your Telegram id</b>\n"
             f"<code>{user_id}</code>\n\n"
             "Put this number in <code>TELEGRAM_ALLOWED_USER_IDS</code> in <code>.env</code>, "
@@ -78,7 +78,7 @@ def render_welcome(user_id: int, allowed: bool) -> str:
         )
     return (
         "<b>OpenCtrl</b>\n"
-        "While the PC is unlocked, send a task and the agent will do it. "
+        "While this computer is unlocked, send a task and the agent will do it. "
         "Each step shows up in this chat.\n\n"
         "<b>Examples</b>\n"
         "<blockquote>Open Notepad and type: meeting tomorrow at 4</blockquote>\n"
@@ -91,7 +91,7 @@ def render_welcome(user_id: int, allowed: bool) -> str:
 def render_help() -> str:
     return (
         "<b>What OpenCtrl can do</b>\n"
-        "Ordinary Windows work: open apps, focus windows, click buttons, type, "
+        "Ordinary desktop work: open apps, focus windows, click buttons, type, "
         "files, settings, the browser, Cursor. It reads the accessibility tree first, "
         "so it does not screenshot every step. It takes a picture only when a control has no name.\n\n"
         "<b>Commands</b>\n"
@@ -106,8 +106,8 @@ def render_help() -> str:
         "A task stops to ask before spending more than the cost limit.\n\n"
         "<b>While it is working</b>\n"
         "A new message is added as the next instruction.\n"
-        "Disk format, shutdown, and registry deletes ask for Allow first.\n\n"
-        "<blockquote>If the PC is locked, the agent stops and asks you to unlock it. The screen stays awake during a task.</blockquote>"
+        "Disk format, shutdown, and deleting a whole system folder ask for Allow first.\n\n"
+        "<blockquote>If the computer is locked, the agent stops and asks you to unlock it. The screen stays awake during a task.</blockquote>"
     )
 
 
@@ -214,7 +214,7 @@ def humanize(name: str, args: dict) -> str:
         "type_text": "Typing",
         "press_keys": f"Pressing {args.get('keys', '')}",
         "launch": f"Opening {args.get('target', '')}",
-        "run_powershell": "Running PowerShell",
+        "run_shell": "Running a command",
         "screenshot": "Looking at the screen",
         "click": "Clicking",
         "scroll": "Scrolling",

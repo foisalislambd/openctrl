@@ -26,7 +26,7 @@ from PIL import Image
 
 from openctrl.agent import AgentEvents, combine_notes, fresh_history, run_agent
 from openctrl.config import Settings
-from openctrl.desktop import Desktop
+from openctrl.driver import Desktop
 from openctrl.files import save_upload
 from openctrl.format_tg import (
     chunks,
@@ -51,7 +51,7 @@ log = logging.getLogger("openctrl.bot")
 
 @dataclass
 class Session:
-    messages: list = field(default_factory=fresh_history)
+    messages: list = field(default_factory=list)
     task: asyncio.Task | None = None
     cancel: threading.Event = field(default_factory=threading.Event)
     inbox: asyncio.Queue = field(default_factory=asyncio.Queue)
@@ -71,7 +71,7 @@ class App:
 
     def session(self, user_id: int) -> Session:
         if user_id not in self.sessions:
-            self.sessions[user_id] = Session()
+            self.sessions[user_id] = Session(messages=fresh_history(self.desktop.shell_name))
         return self.sessions[user_id]
 
     def allowed(self, user_id: int) -> bool:
@@ -112,7 +112,7 @@ def build_router(app: App) -> Router:
         if session.task and not session.task.done():
             await _send(message.bot, message.chat.id, "<i>Send /stop first, then /reset.</i>")
             return
-        session.messages = fresh_history()
+        session.messages = fresh_history(app.desktop.shell_name)
         await _send(message.bot, message.chat.id, "<b>Reset</b>\n<i>Forgot the previous conversation. Send a new task.</i>")
 
     @router.message(Command("schedule"))

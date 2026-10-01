@@ -9,7 +9,6 @@ import shutil
 import subprocess
 import threading
 import time
-from dataclasses import dataclass
 from io import BytesIO
 
 def _enable_dpi() -> None:
@@ -35,20 +34,15 @@ _enable_dpi()
 import uiautomation as auto
 from PIL import Image, ImageGrab
 
-from openctrl.hotkeys import blocks_secure_attention, to_sendkeys
+from openctrl.screen import Shot, image_to_screen
+from openctrl_windows.hotkeys import blocks_secure_attention, to_sendkeys
 
 _CREATE_NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0)
 
 
-@dataclass
-class Shot:
-    text: str
-    jpeg: bytes
-    width: int
-    height: int
-
-
 class Desktop:
+    shell_name = "PowerShell"
+
     def __init__(self) -> None:
         self._jobs: queue.Queue = queue.Queue()
         self._capture: dict | None = None
@@ -135,6 +129,19 @@ class Desktop:
 
     def window_action(self, title: str, action: str, monitor: int) -> str:
         return self.run(lambda: self._window_action(title, action, monitor), 20)
+
+    def push_awake(self) -> None:
+        from openctrl_windows.awake import push_awake
+
+        push_awake()
+
+    def pop_awake(self) -> None:
+        from openctrl_windows.awake import pop_awake
+
+        pop_awake()
+
+    def run_shell(self, command: str, cancel: threading.Event, timeout: float, cwd: str | None) -> str:
+        return run_powershell(command, cancel, timeout, cwd)
 
     def _locked(self) -> str | None:
         try:
@@ -732,16 +739,6 @@ def _open_cursor(folder_arg: str) -> str:
         )
     subprocess.Popen([exe, folder])
     return f"Opened Cursor in {folder}."
-
-
-def image_to_screen(x: int, y: int, capture: dict) -> tuple[int, int]:
-    width = max(int(capture["iw"]), 1)
-    height = max(int(capture["ih"]), 1)
-    x = max(0, min(int(x), width - 1))
-    y = max(0, min(int(y), height - 1))
-    sx = int(capture["ox"]) + int(round(x * int(capture["rw"]) / width))
-    sy = int(capture["oy"]) + int(round(y * int(capture["rh"]) / height))
-    return sx, sy
 
 
 def _pointer(button: str = "left", double: bool = False) -> None:

@@ -5,39 +5,31 @@ from pathlib import Path
 
 _INSTANCE = None
 
+_APP = Path(__file__).resolve().parent
+_REPO = _APP.parents[1]
+sys.path[:0] = [str(_REPO / "packages" / "core"), str(_APP)]
+
+from openctrl.bot import serve
 from openctrl.config import load_settings
-from openctrl.desktop import Desktop
 from openctrl.llm import OpenRouter
+from openctrl.logutil import configure_logging
+from openctrl_windows.desktop import Desktop
+from openctrl_windows.startup import ensure_login_shortcut
+import asyncio
 
 
 def main() -> None:
     if sys.platform != "win32":
-        raise SystemExit("OpenCtrl runs on Windows, in the desktop session you want to control.")
-    settings = load_settings()
-    log_dir = Path(settings.root) / "logs"
-    log_dir.mkdir(exist_ok=True)
-    logging.basicConfig(
-        level=logging.INFO,
-        format="%(asctime)s %(levelname)s %(name)s: %(message)s",
-        handlers=[
-            logging.FileHandler(log_dir / "openctrl.log", encoding="utf-8"),
-            logging.StreamHandler(),
-        ],
-    )
-    logging.getLogger("httpx").setLevel(logging.WARNING)
-    logging.getLogger("httpcore").setLevel(logging.WARNING)
+        raise SystemExit("This OpenCtrl app runs on Windows, in the desktop session you want to control.")
+    settings = load_settings(_APP)
+    configure_logging(settings.root)
     if not _single_instance():
         logging.error("OpenCtrl is already running in this Windows session.")
         raise SystemExit(1)
     if not settings.allowed_user_ids:
         logging.warning("TELEGRAM_ALLOWED_USER_IDS is empty. /start will show your id, and work stays blocked.")
     if settings.start_with_windows:
-        from openctrl.startup import ensure_login_shortcut
-
         logging.info(ensure_login_shortcut(settings.root))
-    from openctrl.bot import serve
-    import asyncio
-
     desktop = Desktop()
     llm = OpenRouter(settings)
     try:

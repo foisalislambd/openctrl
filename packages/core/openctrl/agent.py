@@ -9,9 +9,9 @@ import logging
 import threading
 from dataclasses import dataclass, field
 
-from openctrl.awake import pop_awake, push_awake
 from openctrl.config import Settings
-from openctrl.desktop import Desktop, Shot, run_powershell
+from openctrl.driver import Desktop
+from openctrl.screen import Shot
 from openctrl.files import resolve_send_path
 from openctrl.format_tg import humanize, one_line
 from openctrl.llm import LLMError, OpenRouter
@@ -21,7 +21,8 @@ from openctrl.schedule import Schedule
 
 log = logging.getLogger("openctrl.agent")
 
-SYSTEM = """You are OpenCtrl. You operate the user's own Windows PC from Telegram. The user watches the screen and the chat.
+def _system(shell: str) -> str:
+    return """You are OpenCtrl. You operate the user's own computer from Telegram. The user watches the screen and the chat.
 
 Work in small steps.
 - Prefer the accessibility tree: foreground, list_windows, focus_window, ui_tree, click_control, type_text, press_keys.
@@ -29,22 +30,22 @@ Work in small steps.
 - After a screenshot, the next message contains the image. Do not click, drag, or scroll in the same step as the screenshot. On the following step use coordinate_space "image". (0, 0) is the top-left of that image.
 - ui_tree lines include screen coordinates like @x,y widthxheight. Those are screen pixels. Use coordinate_space "screen" only for those numbers.
 - launch opens programs, files, folders, and URLs. To open a folder in Cursor without a prompt, call launch with target "cursor" and args set to the folder name or full path. A bare name is searched on the Desktop.
-- When the user wants Cursor's AI to do the work, call cursor_prompt with the folder and the instruction. It opens the folder, focuses Cursor, presses Ctrl+I, pastes the text, and presses Enter. Do not click through the Cursor UI for that.
+- When the user wants Cursor's AI to do the work, call cursor_prompt with the folder and the instruction. It opens the folder, focuses Cursor, opens the agent panel, pastes the text, and presses Enter. Do not click through the Cursor UI for that.
 - send_file sends one file from this PC into the Telegram chat. Never send .env, keys, or password files.
-- clipboard_set copies text to the Windows clipboard. clipboard_get reads it.
+- clipboard_set copies text to the clipboard. clipboard_get reads it.
 - window minimizes, maximizes, restores, or moves a window to a monitor.
 - Notes from earlier tasks are included with the user message. Use memory to save a folder, preference, or fact you will need again.
 - schedule runs an instruction later, from 15 seconds up to 24 hours, while OpenCtrl is running.
 - If a tool says the desktop is locked, stop. Do not keep calling tools.
-- run_powershell is for files, settings, and text output. Do not use PowerShell to click a GUI.
+- run_shell runs {shell} for files, settings, and text output. Do not use it to click a window.
 - type_text pastes Unicode, including Bengali, into the focused control. Click the edit box first when it is not already focused.
-- press_keys is only for chords and single keys: ctrl+s, alt+tab, win+e, enter, ctrl+shift+p. Never put a sentence in press_keys.
+- press_keys is only for chords and single keys: ctrl+s, alt+tab, win+e, enter, ctrl+shift+p. Never put a sentence in press_keys. On macOS, ctrl means Command.
 - After an action, check the result with foreground or ui_tree before saying it worked. If a tool returns an error, change approach. Do not repeat the same failed call.
 - When tool calls are present, put one short status sentence in the assistant content, in English. That sentence is shown in Telegram. No hidden plan, no markdown heading.
 - When the task is finished or you are blocked, stop calling tools and write a clear summary in English: what changed, where things are, and what you need if you are blocked.
 - Never invent passwords, codes, or confirmation prompts. If a secure desktop, UAC prompt, login, or lock screen is in the way, stop and ask the user.
-- You only control this PC. Do not send the user's files or secrets anywhere except the Telegram chat they are already using.
-"""
+- You only control this computer. Do not send the user's files or secrets anywhere except the Telegram chat they are already using.
+""".format(shell=shell)
 
 
 @dataclass
@@ -78,8 +79,8 @@ class AgentEvents:
     send_file: callable = field(repr=False)
 
 
-def fresh_history() -> list[dict]:
-    return [{"role": "system", "content": SYSTEM}]
+def fresh_history(shell: str = "PowerShell") -> list[dict]:
+    return [{"role": "system", "content": _system(shell)}]
 
 
 async def run_agent(
@@ -104,8 +105,8 @@ async def run_agent(
     if seed_cost > 0:
         stats.cost = seed_cost
         stats.cost_known = True
-    push_awake()
     try:
+        desktop.push_awake()
         for step in range(1, settings.max_steps + 1):
             if events.cancel.is_set():
                 await events.stopped(_footer(stats, stats.steps))
@@ -120,7 +121,7 @@ async def run_agent(
                 stats.cost_known = True
             _prepare(messages)
             try:
-                message, usage = await _complete(llm, messages, events.cancel)
+                message, usage = await _complete(llm, messages, events.cancel, desktop.shell_name)
             except asyncio.CancelledError:
                 await events.stopped(_footer(stats, stats.steps))
                 return
@@ -178,10 +179,7 @@ async def run_agent(
                 messages.append(_tool_message(call, _cap(result.text, 9000)))
                 if _desktop_locked(result.text):
                     _close_calls(messages, tool_calls[index + 1 :], "Stopped because the desktop is locked.")
-                    await events.final(
-                        "The Windows desktop is locked. Unlock the PC and tell me to continue.",
-                        _footer(stats, stats.steps),
-                    )
+                    await events.final(result.text, _footer(stats, stats.steps))
                     return
                 if result.image:
                     images.append(result)
@@ -204,7 +202,7 @@ async def run_agent(
         log.exception("Agent crashed")
         await events.fail(str(exc))
     finally:
-        pop_awake()
+        desktop.pop_awake()
 
 
 def _repair_tool_calls(messages: list[dict]) -> None:
@@ -324,8 +322,8 @@ def _trim(messages: list[dict], keep: int) -> None:
     messages[:] = [messages[0], *rest]
 
 
-async def _complete(llm: OpenRouter, messages: list[dict], cancel: threading.Event):
-    task = asyncio.create_task(llm.complete(messages, TOOLS))
+async def _complete(llm: OpenRouter, messages: list[dict], cancel: threading.Event, shell: str):
+    task = asyncio.create_task(llm.complete(messages, tool_list(shell)))
     while not task.done():
         if cancel.is_set():
             task.cancel()
@@ -492,7 +490,7 @@ def _compact(value: int) -> str:
 def _detail(name: str, args: dict) -> str:
     if name == "type_text":
         return str(args.get("text") or "")
-    if name == "run_powershell":
+    if name == "run_shell":
         return str(args.get("command") or "")
     if name == "press_keys":
         return str(args.get("keys") or "")
@@ -571,10 +569,10 @@ async def _dispatch(
             await asyncio.sleep(tick)
             remaining -= tick
         return ToolResult(f"Waited {seconds:.1f}s.")
-    if name == "run_powershell":
+    if name == "run_shell":
         command = str(args.get("command") or "").strip()
         if not command:
-            return ToolResult("run_powershell needs a command.")
+            return ToolResult("run_shell needs a command.")
         if len(command) > 8000:
             return ToolResult("Command is too long.")
         reason = danger_reason(command)
@@ -584,7 +582,7 @@ async def _dispatch(
                 return ToolResult("The user did not allow this command. Choose a safer action or ask them.")
         timeout = max(5, min(_int(args, "timeout_seconds", 60), 180))
         text = await asyncio.to_thread(
-            run_powershell,
+            desktop.run_shell,
             command,
             events.cancel,
             float(timeout),
@@ -702,7 +700,8 @@ def _tool(name: str, description: str, properties: dict, required: list[str]) ->
     }
 
 
-TOOLS = [
+def tool_list(shell: str) -> list[dict]:
+    return [
     _tool("list_windows", "List titled top-level windows and which process owns them.", {}, []),
     _tool("foreground", "Read the foreground window, its process, and the focused control.", {}, []),
     _tool(
@@ -758,10 +757,10 @@ TOOLS = [
         ["target"],
     ),
     _tool(
-        "run_powershell",
-        "Run a PowerShell command and return its output. Use this for files and system queries, not for clicking windows.",
+        "run_shell",
+        f"Run a {shell} command and return its output. Use this for files and system queries, not for clicking windows.",
         {
-            "command": _prop("string", "PowerShell command."),
+            "command": _prop("string", f"{shell} command."),
             "cwd": _prop("string", "Optional working directory."),
             "timeout_seconds": _prop("integer", "Limit, 5 to 180. Default 60."),
         },
@@ -868,4 +867,4 @@ TOOLS = [
         {"seconds": _prop("integer", "Seconds, up to 8.")},
         ["seconds"],
     ),
-]
+    ]

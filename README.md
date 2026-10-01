@@ -1,6 +1,8 @@
 # OpenCtrl
 
-OpenCtrl lets you run your own Windows PC from a Telegram chat. You describe a task in normal language. The program on that PC does the work, and each step comes back in the same chat.
+OpenCtrl lets you run your own computer from a Telegram chat. You describe a task in normal language. The program on that computer does the work, and each step comes back in the same chat.
+
+The same agent runs on Windows, macOS, and Linux. Each system has its own app folder and its own way of clicking the desktop. The chat, the model, the tools, and the safety checks are shared.
 
 It is for the computer you are already logged into. It is not a remote-admin product, and it is not a cloud agent that holds your files. The bot runs in your desktop session. The language model only sees the tool results needed for the current task.
 
@@ -11,8 +13,8 @@ A lot of desktop work is still “open this, click that, type this.” Doing it 
 That matters for three reasons.
 
 - **You stay in the chat.** The task, each step, screenshots, and the final summary are messages. You can stop it, add a new instruction, or ask it to send a file back.
-- **It uses names before pixels.** Windows already knows that a control is a button called Save. OpenCtrl reads that accessibility tree first. A screenshot is a fallback, not the default. Named clicks survive theme changes and window moves better than guessing at pixels.
-- **The dangerous parts wait.** Formatting a disk, shutting down, deleting registry keys, and recursive deletes of system folders ask for Allow. `.env` and key files are not sent back to Telegram. Anyone whose id is not in your allow list cannot start a task.
+- **It uses names before pixels.** Where the desktop exposes a button's name, OpenCtrl reads that accessibility tree first. A screenshot is a fallback, not the default. On Linux, if the session has no accessibility tree, it says so and uses the screenshot.
+- **The dangerous parts wait.** Formatting a disk, shutting down, and recursive deletes of a system or home folder ask for Allow. `.env` and key files are not sent back to Telegram. Anyone whose id is not in your allow list cannot start a task.
 
 ## How a task runs
 
@@ -20,13 +22,13 @@ That matters for three reasons.
 You (Telegram)
     │  "Open Notepad and type: meeting tomorrow at 4"
     ▼
-OpenCtrl on your PC
+OpenCtrl on your computer
     │  sends the task, plus short notes from earlier, to OpenRouter
     ▼
 The model picks one tool
     │  list windows, read the UI tree, click a named control, type, …
     ▼
-Windows
+The computer
     │  the tool result goes back to the model
     ▼
 Telegram
@@ -39,7 +41,7 @@ While a task is running, the screen is kept awake. If the desktop is locked, Ope
 
 ## What you can ask for
 
-Talk to it the way you would talk to someone sitting at the PC.
+Talk to it the way you would talk to someone sitting at the computer.
 
 - Open Notepad and type a sentence.
 - Open a folder in Cursor and paste an instruction into Cursor’s agent panel.
@@ -60,16 +62,18 @@ It stops and tells you when it hits something it should not guess through:
 - A custom-drawn window whose controls have no names
 - Typing a password
 
-PowerShell that would format a disk, shut down or restart, edit boot configuration, delete registry keys, wipe free space, or recursively delete a system folder or a drive root waits for an Allow button in Telegram. Ordinary file and settings commands run immediately.
+A shell command that would format a disk, shut down or restart, or recursively delete a system or home folder waits for an Allow button in Telegram. On Windows that also covers registry deletes, diskpart, and boot edits. Ordinary file and settings commands run immediately.
 
 Only private chats are accepted. Group chats are ignored. If `TELEGRAM_ALLOWED_USER_IDS` is empty, `/start` still shows your id, and no task runs until you add it.
 
 ## Requirements
 
-- Windows 10 or 11, in the desktop session you want to control. The screen has to be unlocked.
+- Windows 10 or 11, macOS, or a Linux desktop, in the session you want to control. The screen has to be unlocked.
 - Python 3.12
 - A Telegram bot token from [@BotFather](https://t.me/BotFather)
 - An [OpenRouter](https://openrouter.ai/keys) API key
+
+Linux clicks need an X11 session with `xdotool`, `wmctrl`, `scrot` or ImageMagick, and `xclip`. A Wayland session can take a screenshot with `grim`, and it will say when clicks are blocked. macOS needs Accessibility permission for the terminal that starts OpenCtrl.
 
 The default model is `openai/gpt-6-luna-pro`. Voice notes use `openai/whisper-large-v3`. Both can be changed in `.env`.
 
@@ -78,23 +82,26 @@ The default model is `openai/gpt-6-luna-pro`. Voice notes use `openai/whisper-la
 1. Clone this repository and open a terminal in the project folder.
 2. In Telegram, send `/newbot` to [@BotFather](https://t.me/BotFather) and keep the token.
 3. Create an API key at [OpenRouter](https://openrouter.ai/keys).
-4. Copy `.env.example` to `.env` and paste both keys.
-5. On the PC you want to control, while you are logged in, double-click `run.bat`.
-
-   `run.bat` creates `.venv` if it is missing, installs `requirements.txt`, and starts `main.py`. Do not run it as a Windows service. A service has no desktop to click.
+4. Copy the example env for the computer you are on and paste both keys.
+   - Windows: `apps/windows/.env.example` to `apps/windows/.env`
+   - macOS: `apps/macos/.env.example` to `apps/macos/.env`
+   - Linux: `apps/linux/.env.example` to `apps/linux/.env`
+5. While you are logged in on that computer, start the matching app.
+   - Windows: double-click `run.bat` in this folder. It starts `apps/windows`. Do not run it as a Windows service.
+   - macOS or Linux: `sh apps/macos/run.sh` or `sh apps/linux/run.sh`. That creates `.venv`, installs dependencies, and starts `main.py`.
 
 6. Send `/start` to your bot. It replies with your Telegram id.
-7. Put that id in `TELEGRAM_ALLOWED_USER_IDS` in `.env`. Several people can be listed, separated by commas. Only add people who should be able to operate this PC.
-8. Stop the bot (close the window, or Ctrl+C) and run `run.bat` again.
+7. Put that id in `TELEGRAM_ALLOWED_USER_IDS` in that app's `.env`. Several people can be listed, separated by commas. Only add people who should be able to operate this computer.
+8. Stop the bot and start it again.
 9. Send a task in normal language.
 
-A second copy in the same Windows session exits immediately. The log line is `OpenCtrl is already running in this Windows session.`
+A second copy in the same session exits immediately.
 
-With `START_WITH_WINDOWS=1` (the default), the first successful start creates a Startup shortcut named `OpenCtrl.lnk`. It opens when you log on. It is still a normal desktop program. An older shortcut named `OpenAgent.lnk` is removed at that point.
+With `START_WITH_WINDOWS=1` (the default), the first successful start opens OpenCtrl when you log on. On Windows that is a Startup shortcut named `OpenCtrl.lnk`. On macOS it is a login item. On Linux it is an autostart entry. It is still a normal desktop program. An older Windows shortcut named `OpenAgent.lnk` is removed at that point.
 
 ## Settings
 
-All of these live in `.env`. Never commit that file.
+All of these live in the `.env` next to the app you started (`apps/windows`, `apps/macos`, or `apps/linux`). Never commit that file.
 
 | Name | Default | What it does |
 | --- | --- | --- |
@@ -133,17 +140,17 @@ Anything else that starts with `/` is answered with “Unknown command.”
 
 | Path | What is in it |
 | --- | --- |
-| `logs/openctrl.log` | Runtime log. |
+| `logs/openctrl.log` | Runtime log, inside the app folder you started. |
 | `inbox/` | Files, photos, and videos received from Telegram. |
 | `data/memory.json` | Short notes kept between tasks. |
 | `data/schedules.json` | Timers that have not fired yet. |
-| `.venv/` | Local Python environment created by `run.bat`. |
+| `.venv/` | Local Python environment created by `run.bat` or `run.sh`. |
 
 These paths are gitignored, along with `.env`.
 
 ## Tools the model can call
 
-You do not call these yourself. They are how the model touches the PC. Knowing the list makes the limits easier to understand.
+You do not call these yourself. They are how the model touches the computer. Knowing the list makes the limits easier to understand.
 
 | Tool | What it does |
 | --- | --- |
@@ -155,10 +162,10 @@ You do not call these yourself. They are how the model touches the PC. Knowing t
 | `type_text` | Paste text, including Unicode. Can clear the field first. |
 | `press_keys` | One key or a chord. Not a sentence. |
 | `launch` | Open a program, file, folder, or URL. `cursor` plus a folder opens that folder in Cursor. |
-| `run_powershell` | Run a command and return its text. Not for clicking the GUI. |
+| `run_shell` | Run a command and return its text. PowerShell on Windows, zsh on macOS, bash on Linux. Not for clicking the GUI. |
 | `screenshot` | Capture the desktop or one window. |
 | `click`, `scroll`, `drag` | Pixel actions. After a screenshot, coordinates are image pixels. |
-| `clipboard_get`, `clipboard_set` | Read or write the Windows clipboard. |
+| `clipboard_get`, `clipboard_set` | Read or write the clipboard. |
 | `cursor_prompt` | Open a folder in Cursor, focus the agent panel, paste an instruction, and press Enter. |
 | `send_file` | Post one file into the Telegram chat. Refuses `.env`, key, and password files. |
 | `window` | Minimize, maximize, restore, or move a window to a monitor. |
@@ -166,36 +173,37 @@ You do not call these yourself. They are how the model touches the PC. Knowing t
 | `schedule` | Add, list, or cancel a delayed instruction. |
 | `wait` | Pause up to 8 seconds so a window can open. |
 
-## Project layout
+## Repository
+
+The chat, model, memory, timers, and safety checks live in `packages/core`. Each operating system has an app that supplies the desktop: windows, clicks, typing, screenshots, and login.
 
 ```text
-main.py                 starts logging, the single-instance check, and the bot
-run.bat                 creates the venv, installs dependencies, runs main.py
-requirements.txt        Python packages
-.env.example            settings template
-openctrl/               the package
-  agent.py              the step loop and the tool list
-  bot.py                Telegram commands, files, voice notes, confirmations
-  desktop.py            windows, accessibility tree, mouse, keyboard, screenshots
-  llm.py                OpenRouter chat and transcription
-  safety.py             commands that must wait for Allow
-  files.py              inbox uploads and the secret-file block
-  schedule.py           delayed tasks
-  memory.py             notes kept between tasks
-  startup.py            the login shortcut
-  format_tg.py          chat messages
-  hotkeys.py            key chords
-  awake.py              keep the screen awake during a task
-  config.py             reads .env
-tests/test_core.py      unit tests that do not need a live desktop
+run.bat                         starts the Windows app
+packages/core/openctrl/         shared agent, Telegram bot, model, safety
+apps/windows/                   Windows desktop (UI Automation, PowerShell)
+  openctrl_windows/             desktop, hotkeys, login shortcut
+  main.py
+  run.bat
+apps/macos/                     macOS desktop (System Events, zsh)
+  openctrl_macos/
+  main.py
+  run.sh
+apps/linux/                     Linux desktop (xdotool, wmctrl, bash)
+  openctrl_linux/
+  main.py
+  run.sh
 ```
+
+Logs, inbox, and notes are created inside the app folder you start.
 
 ## Develop
 
-From the project folder, with the virtual environment already created by `run.bat`:
+From the repository root, after a virtual environment exists:
 
 ```bat
-.venv\Scripts\python.exe -m unittest tests.test_core
+set PYTHONPATH=packages\core;apps\windows
+.venv\Scripts\python.exe -m unittest discover -s packages\core\tests
+.venv\Scripts\python.exe -m unittest discover -s apps\windows\tests
 ```
 
 The tests cover formatting, the safety rules, scheduling, memory, file paths, and hotkeys. They do not click a real desktop.

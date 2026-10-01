@@ -15,9 +15,8 @@ from openctrl.agent import (
 from openctrl.files import resolve_send_path, save_upload
 from openctrl.memory import Memory
 from openctrl.schedule import Schedule
-from openctrl.desktop import image_to_screen
+from openctrl.screen import image_to_screen
 from openctrl.format_tg import markdown_to_html, one_line
-from openctrl.hotkeys import blocks_secure_attention, to_sendkeys
 from openctrl.safety import danger_reason
 
 
@@ -39,22 +38,6 @@ class FormatTests(unittest.TestCase):
 
     def test_one_line_collapses(self):
         self.assertEqual(one_line("a\n\nb"), "a b")
-
-
-class HotkeyTests(unittest.TestCase):
-    def test_chord(self):
-        self.assertEqual(to_sendkeys("ctrl+shift+p"), "{Ctrl}{Shift}p")
-        self.assertEqual(to_sendkeys("alt+f4"), "{Alt}{F4}")
-        self.assertEqual(to_sendkeys("enter"), "{Enter}")
-        self.assertEqual(to_sendkeys("ctrl+a, delete"), "{Ctrl}a{Delete}")
-
-    def test_words_are_rejected(self):
-        with self.assertRaises(ValueError):
-            to_sendkeys("hello there")
-
-    def test_secure_attention_is_blocked(self):
-        self.assertTrue(blocks_secure_attention(to_sendkeys("ctrl+alt+delete")))
-        self.assertFalse(blocks_secure_attention(to_sendkeys("ctrl+s")))
 
 
 class ScreenTests(unittest.TestCase):
@@ -96,15 +79,23 @@ class HistoryTests(unittest.TestCase):
 
 class SafetyTests(unittest.TestCase):
     def test_ordinary_commands_pass(self):
-        self.assertIsNone(danger_reason("Get-ChildItem C:\\Users"))
-        self.assertIsNone(danger_reason("Set-Content .\\note.txt 'hello'"))
-        self.assertIsNone(danger_reason("Remove-Item .\\temp\\a.txt"))
+        self.assertIsNone(danger_reason("Get-ChildItem C:\\Users", "win32"))
+        self.assertIsNone(danger_reason("Set-Content .\\note.txt 'hello'", "win32"))
+        self.assertIsNone(danger_reason("Remove-Item .\\temp\\a.txt", "win32"))
 
     def test_destructive_commands_need_confirmation(self):
-        self.assertIsNotNone(danger_reason("format C:"))
-        self.assertIsNotNone(danger_reason("shutdown /s /t 0"))
-        self.assertIsNotNone(danger_reason("Remove-Item C:\\Windows -Recurse"))
-        self.assertIsNotNone(danger_reason("reg delete HKLM\\Software\\Foo /f"))
+        self.assertIsNotNone(danger_reason("format C:", "win32"))
+        self.assertIsNotNone(danger_reason("shutdown /s /t 0", "win32"))
+        self.assertIsNotNone(danger_reason("Remove-Item C:\\Windows -Recurse", "win32"))
+        self.assertIsNotNone(danger_reason("reg delete HKLM\\Software\\Foo /f", "win32"))
+
+    def test_unix_destructive_commands_need_confirmation(self):
+        self.assertIsNone(danger_reason("ls /home", "linux"))
+        self.assertIsNotNone(danger_reason("rm -rf /", "linux"))
+        self.assertIsNotNone(danger_reason("shutdown -h now", "darwin"))
+        self.assertIsNotNone(danger_reason("mkfs.ext4 /dev/sdb", "linux"))
+        self.assertIsNotNone(danger_reason("rm -rf /usr/bin", "linux"))
+        self.assertIsNone(danger_reason("rm -rf /tmp/build", "linux"))
 
 
 class CostTests(unittest.TestCase):
