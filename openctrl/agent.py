@@ -9,19 +9,19 @@ import logging
 import threading
 from dataclasses import dataclass, field
 
-from openagent.awake import pop_awake, push_awake
-from openagent.config import Settings
-from openagent.desktop import Desktop, Shot, run_powershell
-from openagent.files import resolve_send_path
-from openagent.format_tg import humanize, one_line
-from openagent.llm import LLMError, OpenRouter
-from openagent.memory import Memory
-from openagent.safety import danger_reason
-from openagent.schedule import Schedule
+from openctrl.awake import pop_awake, push_awake
+from openctrl.config import Settings
+from openctrl.desktop import Desktop, Shot, run_powershell
+from openctrl.files import resolve_send_path
+from openctrl.format_tg import humanize, one_line
+from openctrl.llm import LLMError, OpenRouter
+from openctrl.memory import Memory
+from openctrl.safety import danger_reason
+from openctrl.schedule import Schedule
 
-log = logging.getLogger("openagent.agent")
+log = logging.getLogger("openctrl.agent")
 
-SYSTEM = """You are OpenAgent. You operate the user's own Windows PC from Telegram. The user watches the screen and the chat.
+SYSTEM = """You are OpenCtrl. You operate the user's own Windows PC from Telegram. The user watches the screen and the chat.
 
 Work in small steps.
 - Prefer the accessibility tree: foreground, list_windows, focus_window, ui_tree, click_control, type_text, press_keys.
@@ -34,7 +34,7 @@ Work in small steps.
 - clipboard_set copies text to the Windows clipboard. clipboard_get reads it.
 - window minimizes, maximizes, restores, or moves a window to a monitor.
 - Notes from earlier tasks are included with the user message. Use memory to save a folder, preference, or fact you will need again.
-- schedule runs an instruction later, from 15 seconds up to 24 hours, while OpenAgent is running.
+- schedule runs an instruction later, from 15 seconds up to 24 hours, while OpenCtrl is running.
 - If a tool says the desktop is locked, stop. Do not keep calling tools.
 - run_powershell is for files, settings, and text output. Do not use PowerShell to click a GUI.
 - type_text pastes Unicode, including Bengali, into the focused control. Click the edit box first when it is not already focused.
@@ -853,7 +853,7 @@ TOOLS = [
     ),
     _tool(
         "schedule",
-        "Run an instruction later while OpenAgent is open. Delay is 15 seconds to 24 hours.",
+        "Run an instruction later while OpenCtrl is open. Delay is 15 seconds to 24 hours.",
         {
             "action": _prop("string", "add, list, or cancel.", ["add", "list", "cancel"]),
             "instruction": _prop("string", "What to do when the timer fires."),

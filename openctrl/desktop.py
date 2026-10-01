@@ -35,7 +35,7 @@ _enable_dpi()
 import uiautomation as auto
 from PIL import Image, ImageGrab
 
-from openagent.hotkeys import blocks_secure_attention, to_sendkeys
+from openctrl.hotkeys import blocks_secure_attention, to_sendkeys
 
 _CREATE_NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0)
 
@@ -52,7 +52,7 @@ class Desktop:
     def __init__(self) -> None:
         self._jobs: queue.Queue = queue.Queue()
         self._capture: dict | None = None
-        self._thread = threading.Thread(target=self._worker, name="openagent-desktop", daemon=True)
+        self._thread = threading.Thread(target=self._worker, name="openctrl-desktop", daemon=True)
         self._thread.start()
 
     def _worker(self) -> None:

@@ -1,4 +1,4 @@
-# OpenAgent
+# OpenCtrl
 
 An agent that controls your own Windows PC from Telegram. You send a task, it does the work, and each step is posted back in the chat.
 
@@ -29,9 +29,9 @@ Send a file, a photo, or a voice note. Files land in `inbox`. A voice note is tr
 
 You can tell it to open a folder in Cursor and paste an instruction into Cursor's agent panel. It can copy text to the clipboard, move or resize windows across monitors, and remember short notes such as the last folder.
 
-"Do this in 10 minutes" waits and then runs, as long as OpenAgent is open. The screen stays awake while a task is running. If the desktop is locked, it stops instead of clicking blindly. A task also stops to ask before it spends more than `MAX_TASK_COST`.
+"Do this in 10 minutes" waits and then runs, as long as OpenCtrl is open. The screen stays awake while a task is running. If the desktop is locked, it stops instead of clicking blindly. A task also stops to ask before it spends more than `MAX_TASK_COST`.
 
-With `START_WITH_WINDOWS=1`, a Startup shortcut opens OpenAgent when you log on. It still runs in the desktop session, not as a service.
+With `START_WITH_WINDOWS=1`, a Startup shortcut opens OpenCtrl when you log on. It still runs in the desktop session, not as a service.
 
 Disk format, shutdown, registry deletes, and recursive deletes of system folders wait for Allow. Everything else runs immediately. `.env` and key files are not sent back to Telegram.
 

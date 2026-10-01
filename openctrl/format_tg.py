@@ -69,7 +69,7 @@ def one_line(text: str, limit: int = 280) -> str:
 def render_welcome(user_id: int, allowed: bool) -> str:
     if not allowed:
         return (
-            "<b>OpenAgent</b>\n"
+            "<b>OpenCtrl</b>\n"
             "This chat can control your Windows PC. You are not allowed yet.\n\n"
             "<b>Your Telegram id</b>\n"
             f"<code>{user_id}</code>\n\n"
@@ -77,12 +77,12 @@ def render_welcome(user_id: int, allowed: bool) -> str:
             "then stop the bot and start it again."
         )
     return (
-        "<b>OpenAgent</b>\n"
+        "<b>OpenCtrl</b>\n"
         "While the PC is unlocked, send a task and the agent will do it. "
         "Each step shows up in this chat.\n\n"
         "<b>Examples</b>\n"
         "<blockquote>Open Notepad and type: meeting tomorrow at 4</blockquote>\n"
-        "<blockquote>Open Cursor in the openagent folder on the Desktop and send this text in the chat</blockquote>\n\n"
+        "<blockquote>Open Cursor in the openctrl folder on the Desktop and send this text in the chat</blockquote>\n\n"
         "<i>/help</i>  ·  <i>/stop</i>  ·  <i>/reset</i>  ·  <i>/schedule</i>\n"
         f"<code>id {user_id}</code>"
     )
@@ -90,7 +90,7 @@ def render_welcome(user_id: int, allowed: bool) -> str:
 
 def render_help() -> str:
     return (
-        "<b>What OpenAgent can do</b>\n"
+        "<b>What OpenCtrl can do</b>\n"
         "Ordinary Windows work: open apps, focus windows, click buttons, type, "
         "files, settings, the browser, Cursor. It reads the accessibility tree first, "
         "so it does not screenshot every step. It takes a picture only when a control has no name.\n\n"
@@ -102,7 +102,7 @@ def render_help() -> str:
         "<b>Also</b>\n"
         "Send a file, a photo, or a voice note. Files are saved in the inbox and can be sent back. "
         "A voice note is transcribed, then run as a task.\n"
-        "Say when something should happen later, up to 24 hours, while OpenAgent is open.\n"
+        "Say when something should happen later, up to 24 hours, while OpenCtrl is open.\n"
         "A task stops to ask before spending more than the cost limit.\n\n"
         "<b>While it is working</b>\n"
         "A new message is added as the next instruction.\n"

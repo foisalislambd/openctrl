@@ -1,6 +1,6 @@
 import unittest
 
-from openagent.agent import (
+from openctrl.agent import (
     RunStats,
     _as_bool,
     _budget_hit,
@@ -12,13 +12,13 @@ from openagent.agent import (
     _usage_cost,
     combine_notes,
 )
-from openagent.files import resolve_send_path, save_upload
-from openagent.memory import Memory
-from openagent.schedule import Schedule
-from openagent.desktop import image_to_screen
-from openagent.format_tg import markdown_to_html, one_line
-from openagent.hotkeys import blocks_secure_attention, to_sendkeys
-from openagent.safety import danger_reason
+from openctrl.files import resolve_send_path, save_upload
+from openctrl.memory import Memory
+from openctrl.schedule import Schedule
+from openctrl.desktop import image_to_screen
+from openctrl.format_tg import markdown_to_html, one_line
+from openctrl.hotkeys import blocks_secure_attention, to_sendkeys
+from openctrl.safety import danger_reason
 
 
 class FormatTests(unittest.TestCase):

@@ -24,11 +24,11 @@ from aiogram.types import (
 )
 from PIL import Image
 
-from openagent.agent import AgentEvents, combine_notes, fresh_history, run_agent
-from openagent.config import Settings
-from openagent.desktop import Desktop
-from openagent.files import save_upload
-from openagent.format_tg import (
+from openctrl.agent import AgentEvents, combine_notes, fresh_history, run_agent
+from openctrl.config import Settings
+from openctrl.desktop import Desktop
+from openctrl.files import save_upload
+from openctrl.format_tg import (
     chunks,
     escape,
     render_confirm,
@@ -42,11 +42,11 @@ from openagent.format_tg import (
     render_stopped,
     render_welcome,
 )
-from openagent.llm import LLMError, OpenRouter
-from openagent.memory import Memory
-from openagent.schedule import Schedule
+from openctrl.llm import LLMError, OpenRouter
+from openctrl.memory import Memory
+from openctrl.schedule import Schedule
 
-log = logging.getLogger("openagent.bot")
+log = logging.getLogger("openctrl.bot")
 
 
 @dataclass

@@ -5,14 +5,14 @@ from pathlib import Path
 
 _INSTANCE = None
 
-from openagent.config import load_settings
-from openagent.desktop import Desktop
-from openagent.llm import OpenRouter
+from openctrl.config import load_settings
+from openctrl.desktop import Desktop
+from openctrl.llm import OpenRouter
 
 
 def main() -> None:
     if sys.platform != "win32":
-        raise SystemExit("OpenAgent runs on Windows, in the desktop session you want to control.")
+        raise SystemExit("OpenCtrl runs on Windows, in the desktop session you want to control.")
     settings = load_settings()
     log_dir = Path(settings.root) / "logs"
     log_dir.mkdir(exist_ok=True)
@@ -20,22 +20,22 @@ def main() -> None:
         level=logging.INFO,
         format="%(asctime)s %(levelname)s %(name)s: %(message)s",
         handlers=[
-            logging.FileHandler(log_dir / "openagent.log", encoding="utf-8"),
+            logging.FileHandler(log_dir / "openctrl.log", encoding="utf-8"),
             logging.StreamHandler(),
         ],
     )
     logging.getLogger("httpx").setLevel(logging.WARNING)
     logging.getLogger("httpcore").setLevel(logging.WARNING)
     if not _single_instance():
-        logging.error("OpenAgent is already running in this Windows session.")
+        logging.error("OpenCtrl is already running in this Windows session.")
         raise SystemExit(1)
     if not settings.allowed_user_ids:
         logging.warning("TELEGRAM_ALLOWED_USER_IDS is empty. /start will show your id, and work stays blocked.")
     if settings.start_with_windows:
-        from openagent.startup import ensure_login_shortcut
+        from openctrl.startup import ensure_login_shortcut
 
         logging.info(ensure_login_shortcut(settings.root))
-    from openagent.bot import serve
+    from openctrl.bot import serve
     import asyncio
 
     desktop = Desktop()
@@ -51,7 +51,7 @@ def _single_instance() -> bool:
     kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
     kernel32.CreateMutexW.argtypes = [ctypes.c_void_p, ctypes.c_bool, ctypes.c_wchar_p]
     kernel32.CreateMutexW.restype = ctypes.c_void_p
-    handle = kernel32.CreateMutexW(None, False, "Local\\OpenAgent")
+    handle = kernel32.CreateMutexW(None, False, "Local\\OpenCtrl")
     error = ctypes.get_last_error()
     _INSTANCE = handle
     return bool(handle) and error != 183

@@ -1,4 +1,4 @@
-"""Start OpenAgent when this Windows user logs on. It stays a normal desktop program."""
+"""Start OpenCtrl when this Windows user logs on. It stays a normal desktop program."""
 
 from __future__ import annotations
 
@@ -15,7 +15,10 @@ def ensure_login_shortcut(root: Path) -> str:
         return "APPDATA is missing, so the login shortcut was not created."
     startup = Path(appdata) / "Microsoft" / "Windows" / "Start Menu" / "Programs" / "Startup"
     startup.mkdir(parents=True, exist_ok=True)
-    link = startup / "OpenAgent.lnk"
+    old = startup / "OpenAgent.lnk"
+    if old.is_file():
+        old.unlink()
+    link = startup / "OpenCtrl.lnk"
     bat = (root / "run.bat").resolve()
     if not bat.is_file():
         return f"run.bat was not found at {bat}."
@@ -25,7 +28,7 @@ def ensure_login_shortcut(root: Path) -> str:
         f"$sc.TargetPath = '{_ps(bat)}'; "
         f"$sc.WorkingDirectory = '{_ps(root.resolve())}'; "
         "$sc.WindowStyle = 7; "
-        "$sc.Description = 'OpenAgent Telegram desktop agent'; "
+        "$sc.Description = 'OpenCtrl Telegram desktop agent'; "
         "$sc.Save()"
     )
     completed = subprocess.run(
@@ -37,7 +40,7 @@ def ensure_login_shortcut(root: Path) -> str:
     if completed.returncode != 0:
         detail = (completed.stderr or completed.stdout or "").strip()
         return f"Could not create the login shortcut: {detail[:300]}"
-    return f"OpenAgent will start at login via {link}."
+    return f"OpenCtrl will start at login via {link}."
 
 
 def _ps(path: Path) -> str:

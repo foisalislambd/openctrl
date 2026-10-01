@@ -1,4 +1,4 @@
-"""Tasks that should run later, while OpenAgent is open in this desktop session."""
+"""Tasks that should run later, while OpenCtrl is open in this desktop session."""
 
 from __future__ import annotations
 

@@ -7,9 +7,9 @@ import logging
 
 import httpx
 
-from openagent.config import Settings
+from openctrl.config import Settings
 
-log = logging.getLogger("openagent.llm")
+log = logging.getLogger("openctrl.llm")
 
 API_URL = "https://openrouter.ai/api/v1/chat/completions"
 STT_URL = "https://openrouter.ai/api/v1/audio/transcriptions"
@@ -98,8 +98,8 @@ class OpenRouter:
         headers = {
             "Authorization": f"Bearer {self.settings.openrouter_api_key}",
             "Content-Type": "application/json",
-            "HTTP-Referer": "http://localhost/openagent",
-            "X-Title": "OpenAgent",
+            "HTTP-Referer": "http://localhost/openctrl",
+            "X-Title": "OpenCtrl",
         }
         try:
             response = await self._client.post(url, headers=headers, json=payload)
