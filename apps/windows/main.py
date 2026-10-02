@@ -5,37 +5,28 @@ from pathlib import Path
 
 _INSTANCE = None
 
-_APP = Path(__file__).resolve().parent
-_REPO = _APP.parents[1]
-sys.path[:0] = [str(_REPO / "packages" / "core"), str(_APP)]
+_SOURCE = Path(__file__).resolve().parent
+if not getattr(sys, "frozen", False):
+    _REPO = _SOURCE.parents[1]
+    sys.path[:0] = [str(_REPO / "packages" / "core"), str(_SOURCE)]
 
-from openctrl.bot import serve
-from openctrl.config import load_settings
-from openctrl.llm import OpenRouter
+from openctrl.deskapp import notify, run_app
+from openctrl.paths import data_directory
 from openctrl.logutil import configure_logging
 from openctrl_windows.desktop import Desktop
-from openctrl_windows.startup import ensure_login_shortcut
-import asyncio
+from openctrl_windows.startup import apply_login
 
 
 def main() -> None:
     if sys.platform != "win32":
         raise SystemExit("This OpenCtrl app runs on Windows, in the desktop session you want to control.")
-    settings = load_settings(_APP)
-    configure_logging(settings.root)
+    _app = data_directory(_SOURCE)
+    configure_logging(_app)
     if not _single_instance():
         logging.error("OpenCtrl is already running in this Windows session.")
+        notify("OpenCtrl", "OpenCtrl is already running.")
         raise SystemExit(1)
-    if not settings.allowed_user_ids:
-        logging.warning("TELEGRAM_ALLOWED_USER_IDS is empty. /start will show your id, and work stays blocked.")
-    if settings.start_with_windows:
-        logging.info(ensure_login_shortcut(settings.root))
-    desktop = Desktop()
-    llm = OpenRouter(settings)
-    try:
-        asyncio.run(serve(settings, desktop, llm))
-    except KeyboardInterrupt:
-        pass
+    run_app(_app, Desktop, apply_login)
 
 
 def _single_instance() -> bool:

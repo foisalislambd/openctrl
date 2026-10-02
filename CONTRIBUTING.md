@@ -24,7 +24,7 @@ Add or extend a test when you change safety rules, scheduling, memory, file send
 
 - Keep the accessibility tree as the first choice. A new click path that only uses pixels needs a reason.
 - Dangerous shell commands belong in `packages/core/openctrl/safety.py`, with a test. Ordinary work should keep running without an Allow prompt.
-- Secrets stay blocked in `packages/core/openctrl/files.py`. Do not add a way to send `.env` or key files to Telegram.
+- Secrets stay blocked in `packages/core/openctrl/files.py`. Do not add a way to send `.env`, `openctrl.db`, or key files to Telegram.
 - User-facing chat text is short and in English, matching the messages already in `packages/core/openctrl/format_tg.py`.
 - Leave unrelated files alone. Do not reformat the whole package in a feature change.
 

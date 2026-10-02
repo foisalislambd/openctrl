@@ -6,14 +6,29 @@ import os
 import subprocess
 from pathlib import Path
 
+from openctrl.paths import launch_command
+
+
+def apply_login(root: Path, enabled: bool) -> str:
+    plist = Path.home() / "Library" / "LaunchAgents" / "com.openctrl.desktop.plist"
+    if not enabled:
+        uid = os.getuid()
+        subprocess.run(["launchctl", "bootout", f"gui/{uid}", str(plist)], capture_output=True, text=True)
+        if plist.is_file():
+            plist.unlink()
+        return "OpenCtrl will not start when you log in."
+    return ensure_login(root)
+
 
 def ensure_login(root: Path) -> str:
     agents = Path.home() / "Library" / "LaunchAgents"
     agents.mkdir(parents=True, exist_ok=True)
     plist = agents / "com.openctrl.desktop.plist"
-    script = (root / "run.sh").resolve()
-    if not script.is_file():
-        return f"run.sh was not found at {script}."
+    found = launch_command(root)
+    if found is None:
+        return "Could not find the OpenCtrl program to start at login."
+    command, work = found
+    arguments = "\n".join(f"    <string>{_xml(part)}</string>" for part in command)
     uid = os.getuid()
     body = f"""<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -22,11 +37,10 @@ def ensure_login(root: Path) -> str:
   <key>Label</key><string>com.openctrl.desktop</string>
   <key>ProgramArguments</key>
   <array>
-    <string>/bin/sh</string>
-    <string>{script}</string>
+{arguments}
   </array>
   <key>RunAtLoad</key><true/>
-  <key>WorkingDirectory</key><string>{root.resolve()}</string>
+  <key>WorkingDirectory</key><string>{_xml(str(work))}</string>
 </dict>
 </plist>
 """
@@ -42,3 +56,7 @@ def ensure_login(root: Path) -> str:
         detail = (completed.stderr or completed.stdout or "").strip()
         return f"Could not install the login item: {detail[:300]}"
     return f"OpenCtrl will start at login via {plist}."
+
+
+def _xml(text: str) -> str:
+    return text.replace("&", "&amp;").replace("<", "&lt;")

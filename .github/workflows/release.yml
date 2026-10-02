@@ -1,0 +1,97 @@
+name: Release
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  version:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.ver.outputs.version }}
+      release: ${{ steps.ver.outputs.release }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Compare VERSION with the latest release
+        id: ver
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 scripts/check_release.py --repo ${{ github.repository }} >> "$GITHUB_OUTPUT"
+
+  build:
+    needs: version
+    if: needs.version.outputs.release == 'true'
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            platform: windows
+          - os: macos-latest
+            platform: macos
+          - os: ubuntu-latest
+            platform: linux
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        if: runner.os != 'Linux'
+        with:
+          python-version: "3.12"
+      - name: Linux build tools
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y python3-venv python3-tk python3-pip python3-dev binutils
+          python3 -m venv .build-venv
+      - name: Install and build
+        shell: bash
+        run: |
+          if [ "${{ runner.os }}" = "Linux" ]; then
+            source .build-venv/bin/activate
+          fi
+          python -m pip install -r "apps/${{ matrix.platform }}/requirements.txt" "pyinstaller>=6.11,<7"
+          python scripts/build_app.py
+      - uses: actions/upload-artifact@v4
+        with:
+          name: OpenCtrl-${{ matrix.platform }}
+          path: dist/OpenCtrl-${{ matrix.platform }}.zip
+          if-no-files-found: error
+
+  publish:
+    needs: [version, build]
+    if: needs.version.outputs.release == 'true' && needs.build.result == 'success'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          path: release-assets
+          merge-multiple: true
+      - name: Publish the GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ needs.version.outputs.version }}
+        run: |
+          python3 scripts/release_notes.py > release-notes.md
+          mkdir -p assets
+          find release-assets -name 'OpenCtrl-*.zip' -exec cp {} assets/ \;
+          count=$(find assets -name 'OpenCtrl-*.zip' | wc -l)
+          if [ "$count" -ne 3 ]; then
+            echo "Expected Windows, macOS, and Linux archives, found ${count}."
+            find release-assets -type f
+            exit 1
+          fi
+          gh release create "v${VERSION}" assets/OpenCtrl-*.zip \
+            --repo "${{ github.repository }}" \
+            --target "${{ github.sha }}" \
+            --title "OpenCtrl ${VERSION}" \
+            --notes-file release-notes.md

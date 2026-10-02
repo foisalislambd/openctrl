@@ -616,16 +616,41 @@ async def _watch_schedule(app: App, bot: Bot) -> None:
                 log.exception("Could not start scheduled task %s", job.id)
 
 
-async def serve(settings: Settings, desktop: Desktop, llm: OpenRouter) -> None:
+async def serve(
+    settings: Settings,
+    desktop: Desktop,
+    llm: OpenRouter,
+    shutdown: asyncio.Event | None = None,
+) -> None:
     app = App(settings, desktop, llm)
     bot = Bot(settings.telegram_token, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
     dispatcher = Dispatcher()
     dispatcher.include_router(build_router(app))
     log.info("Telegram polling started. Model %s", settings.model)
     watcher = asyncio.create_task(_watch_schedule(app, bot))
+    stopper = asyncio.create_task(_honor_shutdown(dispatcher, shutdown))
     try:
-        await dispatcher.start_polling(bot)
+        await dispatcher.start_polling(bot, handle_signals=shutdown is None, close_bot_session=False)
     finally:
+        stopper.cancel()
         watcher.cancel()
+        for task in (stopper, watcher):
+            try:
+                await task
+            except (asyncio.CancelledError, Exception):
+                pass
         await bot.session.close()
         await llm.close()
+
+
+async def _honor_shutdown(dispatcher: Dispatcher, shutdown: asyncio.Event | None) -> None:
+    if shutdown is None:
+        await asyncio.Future()
+        return
+    await shutdown.wait()
+    while True:
+        try:
+            await dispatcher.stop_polling()
+            return
+        except RuntimeError:
+            await asyncio.sleep(0.1)

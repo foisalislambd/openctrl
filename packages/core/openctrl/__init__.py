@@ -1,1 +1,3 @@
-__version__ = "1.0.0"
+from openctrl.version import current_version
+
+__version__ = current_version()

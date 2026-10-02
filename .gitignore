@@ -9,3 +9,6 @@ data/
 *.png
 .pytest_cache/
 .instance.lock
+build/
+dist/
+.build-venv/

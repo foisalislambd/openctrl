@@ -8,7 +8,7 @@ import time
 from pathlib import Path
 
 _SAFE = re.compile(r"[^A-Za-z0-9._-]+")
-_BLOCKED = {".env", "credentials.json", "id_rsa", "id_ed25519"}
+_BLOCKED = {".env", "credentials.json", "id_rsa", "id_ed25519", "openctrl.db"}
 
 
 def save_upload(inbox: Path, filename: str, data: bytes) -> Path:
@@ -40,7 +40,7 @@ def resolve_send_path(raw: str, inbox: Path) -> tuple[str | None, str | None]:
 
 def _is_secret(name: str) -> bool:
     lowered = name.lower()
-    if lowered in _BLOCKED or lowered.endswith((".pem", ".key")):
+    if lowered in _BLOCKED or lowered.startswith("openctrl.db") or lowered.endswith((".pem", ".key")):
         return True
     if lowered == ".env.example":
         return False

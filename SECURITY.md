@@ -4,13 +4,13 @@ OpenCtrl can operate the Windows desktop it is running on. Treat the bot token, 
 
 ## Use it safely
 
-- Keep `.env` on the PC only. It is gitignored. Do not paste it into chat, issues, or screenshots.
+- Keep `data/openctrl.db` on the PC only. It holds the bot token and API key, and it is gitignored. An old `.env` is copied into that database once. Do not paste either file into chat, issues, or screenshots.
 - Put only your own Telegram user id, or people you trust with this computer, in `TELEGRAM_ALLOWED_USER_IDS`.
 - Leave the bot in a private chat. The program ignores groups, but a leaked token still lets someone else host a copy.
 - Do not run OpenCtrl on a PC you do not want the allow-listed users to control.
 - The cost cap and the Allow prompts are limits, not a sandbox. A confirmed command runs with the same Windows user that started `run.bat`.
 
-The program refuses to send `.env`, files whose names end in `.pem` or `.key`, and a short list of credential filenames back to Telegram. That block is not a full secret scanner.
+The program refuses to send `.env`, `openctrl.db`, files whose names end in `.pem` or `.key`, and a short list of credential filenames back to Telegram. That block is not a full secret scanner.
 
 ## Reporting a vulnerability
 

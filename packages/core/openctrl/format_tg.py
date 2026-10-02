@@ -73,8 +73,8 @@ def render_welcome(user_id: int, allowed: bool) -> str:
             "This chat can control this computer. You are not allowed yet.\n\n"
             "<b>Your Telegram id</b>\n"
             f"<code>{user_id}</code>\n\n"
-            "Put this number in <code>TELEGRAM_ALLOWED_USER_IDS</code> in <code>.env</code>, "
-            "then stop the bot and start it again."
+            "Paste this number into <b>Allowed Telegram ids</b> in the OpenCtrl window, "
+            "then click <b>Save and apply</b>."
         )
     return (
         "<b>OpenCtrl</b>\n"

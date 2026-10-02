@@ -2,7 +2,7 @@
 
 OpenCtrl lets you run your own computer from a Telegram chat. You describe a task in normal language. The program on that computer does the work, and each step comes back in the same chat.
 
-The same agent runs on Windows, macOS, and Linux. Each system has its own app folder and its own way of clicking the desktop. The chat, the model, the tools, and the safety checks are shared.
+The same agent runs on Windows, macOS, and Linux. Each system has its own app window and its own way of clicking the desktop. The chat, the model, the tools, and the safety checks are shared. You set the keys in that window. The agent starts with the app.
 
 It is for the computer you are already logged into. It is not a remote-admin product, and it is not a cloud agent that holds your files. The bot runs in your desktop session. The language model only sees the tool results needed for the current task.
 
@@ -14,7 +14,7 @@ That matters for three reasons.
 
 - **You stay in the chat.** The task, each step, screenshots, and the final summary are messages. You can stop it, add a new instruction, or ask it to send a file back.
 - **It uses names before pixels.** Where the desktop exposes a button's name, OpenCtrl reads that accessibility tree first. A screenshot is a fallback, not the default. On Linux, if the session has no accessibility tree, it says so and uses the screenshot.
-- **The dangerous parts wait.** Formatting a disk, shutting down, and recursive deletes of a system or home folder ask for Allow. `.env` and key files are not sent back to Telegram. Anyone whose id is not in your allow list cannot start a task.
+- **The dangerous parts wait.** Formatting a disk, shutting down, and recursive deletes of a system or home folder ask for Allow. `.env`, the settings database, and key files are not sent back to Telegram. Anyone whose id is not in your allow list cannot start a task.
 
 ## How a task runs
 
@@ -64,7 +64,7 @@ It stops and tells you when it hits something it should not guess through:
 
 A shell command that would format a disk, shut down or restart, or recursively delete a system or home folder waits for an Allow button in Telegram. On Windows that also covers registry deletes, diskpart, and boot edits. Ordinary file and settings commands run immediately.
 
-Only private chats are accepted. Group chats are ignored. If `TELEGRAM_ALLOWED_USER_IDS` is empty, `/start` still shows your id, and no task runs until you add it.
+Only private chats are accepted. Group chats are ignored. If no Telegram id is saved yet, `/start` still shows your id, and no task runs until you add it in the window.
 
 ## Requirements
 
@@ -75,46 +75,44 @@ Only private chats are accepted. Group chats are ignored. If `TELEGRAM_ALLOWED_U
 
 Linux clicks need an X11 session with `xdotool`, `wmctrl`, `scrot` or ImageMagick, and `xclip`. A Wayland session can take a screenshot with `grim`, and it will say when clicks are blocked. macOS needs Accessibility permission for the terminal that starts OpenCtrl.
 
-The default model is `openai/gpt-6-luna-pro`. Voice notes use `openai/whisper-large-v3`. Both can be changed in `.env`.
+The default model is `openai/gpt-6-luna-pro`. Voice notes use `openai/whisper-large-v3`. Both can be changed in the OpenCtrl window.
 
 ## Set it up
 
-1. Clone this repository and open a terminal in the project folder.
+1. Clone this repository.
 2. In Telegram, send `/newbot` to [@BotFather](https://t.me/BotFather) and keep the token.
 3. Create an API key at [OpenRouter](https://openrouter.ai/keys).
-4. Copy the example env for the computer you are on and paste both keys.
-   - Windows: `apps/windows/.env.example` to `apps/windows/.env`
-   - macOS: `apps/macos/.env.example` to `apps/macos/.env`
-   - Linux: `apps/linux/.env.example` to `apps/linux/.env`
-5. While you are logged in on that computer, start the matching app.
+4. While you are logged in on the computer you want to control, start the matching app.
    - Windows: double-click `run.bat` in this folder. It starts `apps/windows`. Do not run it as a Windows service.
-   - macOS or Linux: `sh apps/macos/run.sh` or `sh apps/linux/run.sh`. That creates `.venv`, installs dependencies, and starts `main.py`.
-
+   - macOS or Linux: `sh apps/macos/run.sh` or `sh apps/linux/run.sh`. That creates `.venv`, installs dependencies, and opens the window.
+5. Paste the bot token and the OpenRouter key into the window. Click **Save and apply**. The agent starts on its own.
 6. Send `/start` to your bot. It replies with your Telegram id.
-7. Put that id in `TELEGRAM_ALLOWED_USER_IDS` in that app's `.env`. Several people can be listed, separated by commas. Only add people who should be able to operate this computer.
-8. Stop the bot and start it again.
-9. Send a task in normal language.
+7. Paste that id into **Allowed Telegram ids**. Several people can be listed, separated by commas. Only add people who should be able to operate this computer. Click **Save and apply** again.
+8. Send a task in normal language.
+
+The keys are stored in `data/openctrl.db` next to the app you started. They are not read from the environment. If a `.env` file is already there, the first launch copies it into that database and does not read it again. You can delete the `.env` after the window shows the keys.
 
 A second copy in the same session exits immediately.
 
-With `START_WITH_WINDOWS=1` (the default), the first successful start opens OpenCtrl when you log on. On Windows that is a Startup shortcut named `OpenCtrl.lnk`. On macOS it is a login item. On Linux it is an autostart entry. It is still a normal desktop program. An older Windows shortcut named `OpenAgent.lnk` is removed at that point.
+**Start OpenCtrl when I log in** is on by default. On Windows that is a Startup shortcut named `OpenCtrl.lnk`. On macOS it is a login item. On Linux it is an autostart entry. It is still a normal desktop program. An older Windows shortcut named `OpenAgent.lnk` is removed at that point. Turning the checkbox off removes that login item. **Start the agent when this app opens** is also on by default, so logging in opens the window and the agent starts with it.
 
 ## Settings
 
-All of these live in the `.env` next to the app you started (`apps/windows`, `apps/macos`, or `apps/linux`). Never commit that file.
+The window writes these into `data/openctrl.db`. Never commit that file, and do not send it back through Telegram.
 
-| Name | Default | What it does |
+| Field | Default | What it does |
 | --- | --- | --- |
-| `TELEGRAM_BOT_TOKEN` | empty | Token from BotFather. Required. |
-| `TELEGRAM_ALLOWED_USER_IDS` | empty | Comma-separated Telegram user ids allowed to run tasks. |
-| `OPENROUTER_API_KEY` | empty | OpenRouter key. Required. |
-| `OPENROUTER_MODEL` | `openai/gpt-6-luna-pro` | Model that chooses the tools. |
-| `OPENROUTER_PROVIDER_SORT` | `exacto` | OpenRouter routing. Exacto is more reliable for tool calls. Leave empty for OpenRouter’s default route. |
-| `OPENROUTER_TRANSCRIBE_MODEL` | `openai/whisper-large-v3` | Model used for voice notes. |
-| `MAX_STEPS` | `30` | Most tool steps in one task. Clamped between 5 and 80. |
-| `MAX_OUTPUT_TOKENS` | `12000` | Token cap on each model reply. Clamped between 1000 and 32000. |
-| `MAX_TASK_COST` | `0.50` | Dollars. The task stops and asks before spending more than this. `0` turns the limit off. |
-| `START_WITH_WINDOWS` | `1` | Create the login shortcut. `0`, `false`, `no`, or `off` skips it. |
+| Telegram bot token | empty | Token from BotFather. Required. |
+| Allowed Telegram ids | empty | Telegram user ids allowed to run tasks. |
+| OpenRouter API key | empty | OpenRouter key. Required. |
+| Model | `openai/gpt-6-luna-pro` | Model that chooses the tools. |
+| Provider sort | `exacto` | OpenRouter routing. Exacto is more reliable for tool calls. Leave empty for OpenRouter’s default route. |
+| Voice model | `openai/whisper-large-v3` | Model used for voice notes. |
+| Max steps | `30` | Most tool steps in one task. Clamped between 5 and 80. |
+| Max reply tokens | `12000` | Token cap on each model reply. Clamped between 1000 and 32000. |
+| Cost limit ($) | `0.50` | The task stops and asks before spending more than this. `0` turns the limit off. |
+| Start the agent when this app opens | on | The agent starts as soon as the window opens. |
+| Start OpenCtrl when I log in | on | Create the login shortcut. |
 
 ## Commands
 
@@ -140,8 +138,9 @@ Anything else that starts with `/` is answered with “Unknown command.”
 
 | Path | What is in it |
 | --- | --- |
-| `logs/openctrl.log` | Runtime log, inside the app folder you started. |
+| `logs/openctrl.log` | Runtime log, inside the app folder you started. The window shows the latest lines. |
 | `inbox/` | Files, photos, and videos received from Telegram. |
+| `data/openctrl.db` | Bot token, API key, and the other settings. |
 | `data/memory.json` | Short notes kept between tasks. |
 | `data/schedules.json` | Timers that have not fired yet. |
 | `.venv/` | Local Python environment created by `run.bat` or `run.sh`. |
@@ -167,7 +166,7 @@ You do not call these yourself. They are how the model touches the computer. Kno
 | `click`, `scroll`, `drag` | Pixel actions. After a screenshot, coordinates are image pixels. |
 | `clipboard_get`, `clipboard_set` | Read or write the clipboard. |
 | `cursor_prompt` | Open a folder in Cursor, focus the agent panel, paste an instruction, and press Enter. |
-| `send_file` | Post one file into the Telegram chat. Refuses `.env`, key, and password files. |
+| `send_file` | Post one file into the Telegram chat. Refuses `.env`, `openctrl.db`, key, and password files. |
 | `window` | Minimize, maximize, restore, or move a window to a monitor. |
 | `memory` | Read or write a short note. |
 | `schedule` | Add, list, or cancel a delayed instruction. |
@@ -175,7 +174,7 @@ You do not call these yourself. They are how the model touches the computer. Kno
 
 ## Repository
 
-The chat, model, memory, timers, and safety checks live in `packages/core`. Each operating system has an app that supplies the desktop: windows, clicks, typing, screenshots, and login.
+The chat, model, memory, timers, settings database, and safety checks live in `packages/core`. The setup window lives there too. Each operating system has an app that supplies the desktop: windows, clicks, typing, screenshots, and login.
 
 ```text
 run.bat                         starts the Windows app
@@ -195,6 +194,18 @@ apps/linux/                     Linux desktop (xdotool, wmctrl, bash)
 ```
 
 Logs, inbox, and notes are created inside the app folder you start.
+
+## Releases
+
+The version is the `VERSION` file at the repository root, written as `major.minor.patch`. A push to `main` compares that number with the tags already published on GitHub.
+
+- If `VERSION` is greater than the latest release, Actions builds the Windows, macOS, and Linux apps and publishes tag `vX.Y.Z` with the three zip files. The changelog section for that version becomes the release notes.
+- If `VERSION` is equal to or lower than the latest release, the workflow stops and does not publish anything.
+- The first push publishes a release when no release exists yet.
+
+To ship the next one, raise `VERSION`, add a matching `## x.y.z` section to [CHANGELOG.md](CHANGELOG.md), and push `main`.
+
+The zip from a release is the built app. Double-click `OpenCtrl.exe` on Windows, `OpenCtrl.app` on macOS, or the `OpenCtrl` program on Linux. A built app keeps its database in the user data folder (`%APPDATA%\OpenCtrl` on Windows). Running from this repository with `run.bat` or `run.sh` still keeps `data/openctrl.db` in the app folder.
 
 ## Develop
 

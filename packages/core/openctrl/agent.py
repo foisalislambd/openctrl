@@ -31,7 +31,7 @@ Work in small steps.
 - ui_tree lines include screen coordinates like @x,y widthxheight. Those are screen pixels. Use coordinate_space "screen" only for those numbers.
 - launch opens programs, files, folders, and URLs. To open a folder in Cursor without a prompt, call launch with target "cursor" and args set to the folder name or full path. A bare name is searched on the Desktop.
 - When the user wants Cursor's AI to do the work, call cursor_prompt with the folder and the instruction. It opens the folder, focuses Cursor, opens the agent panel, pastes the text, and presses Enter. Do not click through the Cursor UI for that.
-- send_file sends one file from this PC into the Telegram chat. Never send .env, keys, or password files.
+- send_file sends one file from this PC into the Telegram chat. Never send .env, openctrl.db, keys, or password files.
 - clipboard_set copies text to the clipboard. clipboard_get reads it.
 - window minimizes, maximizes, restores, or moves a window to a monitor.
 - Notes from earlier tasks are included with the user message. Use memory to save a folder, preference, or fact you will need again.
@@ -826,7 +826,7 @@ def tool_list(shell: str) -> list[dict]:
     ),
     _tool(
         "send_file",
-        "Send a file from this PC to the Telegram chat. Do not use this for .env or key files.",
+        "Send a file from this PC to the Telegram chat. Do not use this for .env, openctrl.db, or key files.",
         {"path": _prop("string", "Full path or a file name on the Desktop, in Documents, Downloads, or the inbox.")},
         ["path"],
     ),

@@ -1,5 +1,8 @@
 import unittest
 
+from openctrl.config import SettingsError, load_settings, read_settings, save_settings, values_from_settings
+from openctrl.paths import data_directory, launch_command
+from openctrl.version import VersionError, changelog_notes, current_version, is_newer
 from openctrl.agent import (
     RunStats,
     _as_bool,
@@ -158,6 +161,14 @@ class PowerTests(unittest.TestCase):
             found, error = resolve_send_path(str(secret), inbox)
             self.assertIsNone(found)
             self.assertIn("secret", error)
+            database = inbox / "openctrl.db"
+            database.write_text("nope", encoding="utf-8")
+            found, error = resolve_send_path(str(database), inbox)
+            self.assertIsNone(found)
+            wal = inbox / "openctrl.db-wal"
+            wal.write_text("nope", encoding="utf-8")
+            found, error = resolve_send_path(str(wal), inbox)
+            self.assertIsNone(found)
             local = inbox / ".env.local"
             local.write_text("nope", encoding="utf-8")
             found, error = resolve_send_path(str(local), inbox)
@@ -179,6 +190,141 @@ class PowerTests(unittest.TestCase):
             memory = Memory(Path(folder) / "memory.json")
             _remember_cursor(memory, r"Opened Cursor in C:\Work\demo. Opened the agent panel.")
             self.assertIn(r"C:\Work\demo", memory.read("last_cursor_folder"))
+
+
+class StoreTests(unittest.TestCase):
+    def test_env_is_copied_once_and_then_ignored(self):
+        import tempfile
+        from pathlib import Path
+
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            (root / ".env").write_text(
+                "TELEGRAM_BOT_TOKEN=token-1\nOPENROUTER_API_KEY=key-1\n"
+                "TELEGRAM_ALLOWED_USER_IDS=12, 34\nSTART_WITH_WINDOWS=0\n",
+                encoding="utf-8",
+            )
+            settings = read_settings(root)
+            self.assertEqual(settings.telegram_token, "token-1")
+            self.assertEqual(settings.openrouter_api_key, "key-1")
+            self.assertEqual(settings.allowed_user_ids, frozenset({12, 34}))
+            self.assertFalse(settings.start_with_windows)
+            self.assertTrue(settings.agent_autostart)
+            self.assertTrue((root / "data" / "openctrl.db").is_file())
+            save_settings(root, {**values_from_settings(settings), "telegram_bot_token": "token-2"})
+            (root / ".env").write_text(
+                "TELEGRAM_BOT_TOKEN=token-9\nOPENROUTER_API_KEY=key-9\n",
+                encoding="utf-8",
+            )
+            again = read_settings(root)
+            self.assertEqual(again.telegram_token, "token-2")
+            self.assertEqual(again.openrouter_api_key, "key-1")
+
+    def test_bad_id_and_limits(self):
+        import tempfile
+        from pathlib import Path
+
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            with self.assertRaises(SettingsError):
+                save_settings(
+                    root,
+                    {
+                        "telegram_bot_token": "token",
+                        "openrouter_api_key": "key",
+                        "telegram_allowed_user_ids": "abc",
+                    },
+                )
+            with self.assertRaises(SystemExit):
+                load_settings(root)
+            saved = save_settings(
+                root,
+                {
+                    "telegram_bot_token": "token",
+                    "openrouter_api_key": "key",
+                    "max_steps": "999",
+                    "max_task_cost": "nope",
+                    "agent_autostart": "no",
+                },
+            )
+            self.assertEqual(saved.max_steps, 80)
+            self.assertEqual(saved.max_task_cost, 0.50)
+            self.assertFalse(saved.agent_autostart)
+            self.assertTrue(load_settings(root).configured)
+
+    def test_setup_window_builds(self):
+        import tempfile
+        import tkinter as tk
+        from pathlib import Path
+
+        from openctrl.deskapp import DeskApp
+
+        try:
+            window = tk.Tk()
+        except tk.TclError:
+            self.skipTest("no display")
+        window.withdraw()
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            app = DeskApp(window, root, lambda: None, lambda _path, enabled: f"login {enabled}")
+            app.build()
+            window.update()
+            self.assertIn("telegram_bot_token", app._entries)
+            self.assertEqual(app._entries["openrouter_model"].get(), "openai/gpt-6-luna-pro")
+            app._entries["telegram_bot_token"].delete(0, "end")
+            app._entries["telegram_bot_token"].insert(0, "token")
+            app._entries["openrouter_api_key"].delete(0, "end")
+            app._entries["openrouter_api_key"].insert(0, "key")
+            app._autostart.set(False)
+            app._login.set(False)
+            app.save_clicked()
+            window.update()
+            stored = read_settings(root)
+            self.assertEqual(stored.telegram_token, "token")
+            self.assertFalse(stored.start_with_windows)
+            self.assertIn("login False", app._note_label.cget("text"))
+        window.destroy()
+
+
+class ReleaseTests(unittest.TestCase):
+    def test_version_file_is_the_app_version(self):
+        self.assertEqual(current_version(), "1.1.0")
+
+    def test_only_a_greater_version_is_released(self):
+        self.assertTrue(is_newer("1.1.0", []))
+        self.assertTrue(is_newer("1.2.0", ["v1.1.0", "v1.0.0"]))
+        self.assertTrue(is_newer("1.10.0", ["v1.9.0"]))
+        self.assertFalse(is_newer("1.1.0", ["v1.1.0"]))
+        self.assertFalse(is_newer("1.0.0", ["1.1.0"]))
+        self.assertFalse(is_newer("1.2.0", ["v1.10.0"]))
+        with self.assertRaises(VersionError):
+            is_newer("1.1", [])
+
+    def test_changelog_section_stops_at_the_next_version(self):
+        notes = changelog_notes("# Changelog\n\n## 1.1.0\n\n- Window\n\n## 1.0.0\n\n- First\n", "v1.1.0")
+        self.assertIn("Window", notes)
+        self.assertNotIn("First", notes)
+        self.assertEqual(changelog_notes("# Changelog\n", "2.0.0"), "OpenCtrl 2.0.0")
+
+    def test_source_checkout_keeps_data_beside_the_app(self):
+        import sys
+        import tempfile
+        from pathlib import Path
+
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            self.assertEqual(data_directory(root), root)
+            if sys.platform == "win32":
+                (root / "run.bat").write_text("@echo off\n", encoding="utf-8")
+                command, work = launch_command(root)
+                self.assertEqual(command, [str((root / "run.bat").resolve())])
+            else:
+                script = root / "run.sh"
+                script.write_text("#!/bin/sh\n", encoding="utf-8")
+                command, work = launch_command(root)
+                self.assertEqual(command[0], "/bin/sh")
+                self.assertEqual(command[1], str(script.resolve()))
+            self.assertEqual(work, root.resolve())
 
 
 if __name__ == "__main__":
